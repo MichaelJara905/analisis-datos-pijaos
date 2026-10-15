@@ -118,7 +118,22 @@ COMPACTAR_ESPACIOS_INTERNOS = False
 # FORMATO DE LOS CÓDIGOS
 # ============================================================
 
-PATRON_CODIGO_CUPS = r"^\d{6}$"          # CONFIRMADO: siempre 6 dígitos
+# CONFIRMADO por el equipo y contrastado con el homologador (8.902 filas) y
+# la trazabilidad de la Res. 2706: casi siempre 6 dígitos, a veces con
+# letras (estancias 129M01, traslados 601T02...). Los propios son
+# PRO + 4 o más dígitos (PRO6212) y se cargan como un CUPS normal.
+PATRON_CODIGO_CUPS = r"^(?:[0-9A-Z]{6}|PRO\d{4,})$"
+PATRON_CODIGO_PROPIO = r"^PRO\d{4,}$"
+PREFIJO_CODIGO_PROPIO = "PRO"
+DIGITOS_CODIGO_PROPIO = 4
+
+# Traslados: nunca llevan SOAT; van como PRO (valor o kilometraje) o como
+# propios.  (CONFIRMADO por el equipo; son los 4 del homologador)
+CODIGOS_TRASLADO = ("601T01", "601T02", "602T01", "602T02")
+
+# Creación de propios: separador distinto al de los demás cargues.
+SEPARADOR_PROPIOS = "|"
+REEMPLAZO_SEPARADOR_PROPIOS = "-"
 PATRON_CODIGO_CUMS = r"^\d+-\d+$"        # CONFIRMADO: expediente-consecutivo
 PATRON_CODIGO_INS = r"^[A-Za-z0-9._\-]+$"  # INFERIDO: libre, sin espacios
 

@@ -421,3 +421,56 @@ def test_el_anexo_original_no_se_modifica(tmp_path) -> None:
     cargues_service.generar_salidas(resultado, tmp_path / "salidas")
 
     assert ruta.read_bytes() == antes
+
+
+# ============================================================
+# CÓDIGOS CUPS ALFANUMÉRICOS, PROPIOS Y TRASLADOS
+# ============================================================
+
+def _cups(codigo, **campos):
+    fila = {"_fila": 11, "codigo": codigo, "descripcion": "X", "valor": 1000}
+    fila.update(campos)
+    return construir_registro(fila, rules.CARGUE_CUPS)
+
+
+@pytest.mark.parametrize("codigo", ["810116", "129M01", "601T02", "A12345", "PRO6212"])
+def test_cups_validos_alfanumericos_y_propios(codigo) -> None:
+    assert not _cups(codigo).bloqueado
+
+
+@pytest.mark.parametrize("codigo", ["44130", "4413022", "129m01", "441-02", "PRO12"])
+def test_cups_con_formato_invalido_bloquea(codigo) -> None:
+    assert _cups(codigo).bloqueado
+
+
+def test_cinco_digitos_sugiere_el_cero_inicial() -> None:
+    registro = _cups("53109")
+    sugerencias = " ".join(h.sugerencia for h in registro.hallazgos)
+    assert registro.bloqueado
+    assert "053109" in sugerencias
+
+
+def test_el_cups_alfanumerico_no_cambia_el_txt() -> None:
+    registro = _registro(codigo="129M01", valor=362100)
+    assert (
+        txt_writer.construir_linea(registro, rules.CARGUE_CUPS)
+        == "129M01;362100;PRO;0;0;"
+    )
+
+
+@pytest.mark.parametrize("codigo", ["601T01", "602T01", "602T02", "PRO6212"])
+def test_traslado_o_propio_regulado_queda_bloqueado(codigo) -> None:
+    from src.app.domain.cargues.validators import validar_codigos_propios_y_traslados
+
+    registro = _cups(codigo, tipo_tarifa="UVB", codigo_ley="39601")
+    validar_codigos_propios_y_traslados([registro])
+    assert any("nunca llevan SOAT" in h.regla for h in registro.hallazgos)
+    assert registro.bloqueado
+
+
+def test_traslado_propio_no_se_bloquea() -> None:
+    from src.app.domain.cargues.validators import validar_codigos_propios_y_traslados
+
+    registro = _cups("601T02", tipo_tarifa="PRO", valor=35456)
+    validar_codigos_propios_y_traslados([registro])
+    assert not registro.bloqueado

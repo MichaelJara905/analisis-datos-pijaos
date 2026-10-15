@@ -83,7 +83,7 @@ def _procesar_codigo(
                 problema=f"el código '{codigo}' no cumple el formato de {tipo_cargue}",
                 valor_original=codigo,
                 regla=_texto_regla_codigo(tipo_cargue),
-                sugerencia="corregir el código o confirmar que es un código propio",
+                sugerencia=_sugerencia_codigo(codigo, tipo_cargue),
             )
         )
 
@@ -107,9 +107,50 @@ def _procesar_codigo(
             )
 
 
+def _sugerencia_codigo(codigo: str, tipo_cargue: str) -> str:
+    base = "corregir el código o confirmar que es un código propio"
+    if tipo_cargue == rules.CARGUE_CUPS and re.fullmatch(r"\d{5}", codigo):
+        return (
+            f"{base}; si es un CUPS al que Excel le quitó el cero inicial, "
+            f"sería '0{codigo}' (verificar en el homologador)"
+        )
+    return base
+
+
+def validar_codigos_propios_y_traslados(registros: list[Registro]) -> None:
+    """Los traslados y los propios (PRO####) nunca se cargan como regulados."""
+
+    for registro in registros:
+        es_propio = re.match(rules.PATRON_CODIGO_PROPIO, registro.codigo)
+        es_traslado = registro.codigo in rules.CODIGOS_TRASLADO
+        if not (es_propio or es_traslado) or not registro.es_regulado:
+            continue
+
+        registro.agregar(
+            Hallazgo(
+                fila=registro.fila,
+                campo="tipo_tarifa",
+                severidad=Severidad.BLOQUEANTE,
+                problema=(
+                    f"el código '{registro.codigo}' se marcó como "
+                    f"{registro.tipo_tarifa}"
+                ),
+                valor_original=registro.tipo_tarifa,
+                regla=(
+                    "los propios y los traslados nunca llevan SOAT: "
+                    "se cargan como PRO"
+                ),
+                sugerencia="cambiar el tipo a PRO y definir el valor",
+            )
+        )
+
+
 def _texto_regla_codigo(tipo_cargue: str) -> str:
     return {
-        rules.CARGUE_CUPS: "el CUPS siempre tiene 6 dígitos",
+        rules.CARGUE_CUPS: (
+            "el CUPS tiene 6 caracteres (dígitos o letras mayúsculas, "
+            "ej. 129M01) o es un propio PRO####"
+        ),
         rules.CARGUE_CUMS: "el CUMS es expediente-consecutivo (ej. 20048691-1)",
         rules.CARGUE_INS: "el código de insumo no admite espacios ni signos",
     }[tipo_cargue]

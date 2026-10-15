@@ -59,6 +59,8 @@ def procesar_anexo(
 
     if tipo_cargue != rules.CARGUE_CUPS:
         validators.validar_descripciones_repetidas(registros)
+    else:
+        validators.validar_codigos_propios_y_traslados(registros)
 
     generales: list[Hallazgo] = []
 
