@@ -10,6 +10,7 @@ escribe en una carpeta de salida aparte, con fecha y hora en el nombre.
 from __future__ import annotations
 
 import csv
+from collections.abc import Iterable, Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO
@@ -36,6 +37,7 @@ def procesar_anexo(
     hoja: str | None = None,
     fila_encabezado: int | None = None,
     mapeo_manual: dict[str, str] | None = None,
+    soat_por_cups: Mapping[str, Iterable[str]] | None = None,
 ) -> ResultadoCargue:
     """Lee un anexo y devuelve el resultado completo del análisis.
 
@@ -63,6 +65,40 @@ def procesar_anexo(
         validators.validar_codigos_propios_y_traslados(registros)
 
     generales: list[Hallazgo] = []
+
+    if tipo_cargue == rules.CARGUE_CUPS:
+        if soat_por_cups is None:
+            generales.append(
+                Hallazgo(
+                    fila=anexo.fila_encabezado,
+                    campo="archivo",
+                    severidad=Severidad.ADVERTENCIA,
+                    problema="no se validó contra el homologador",
+                    regla="no se indicó la carpeta de referencias",
+                    sugerencia=(
+                        "indicar la carpeta con el SUPERHOMOLOGADOR para "
+                        "cruzar CUPS y códigos SOAT"
+                    ),
+                )
+            )
+        else:
+            sin_cruce = validators.validar_contra_homologador(
+                registros, soat_por_cups
+            )
+            if sin_cruce:
+                generales.append(
+                    Hallazgo(
+                        fila=anexo.fila_encabezado,
+                        campo="archivo",
+                        severidad=Severidad.ADVERTENCIA,
+                        problema=(
+                            f"{sin_cruce} registros tienen un CUPS que no está "
+                            "en el homologador y no se pudieron cruzar"
+                        ),
+                        regla="solo se valida lo que el homologador conoce",
+                        sugerencia="revisar esos códigos manualmente",
+                    )
+                )
 
     if not registros:
         generales.append(

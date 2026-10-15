@@ -468,6 +468,86 @@ def test_traslado_o_propio_regulado_queda_bloqueado(codigo) -> None:
     assert registro.bloqueado
 
 
+HOMOLOGADOS = {
+    "441302": frozenset({"18300"}),
+    "129M02": frozenset({"38122", "38123", "38124"}),
+}
+
+
+def test_pro_con_valor_igual_al_soat_queda_bloqueado() -> None:
+    from src.app.domain.cargues.validators import validar_contra_homologador
+
+    registro = _cups("441302", tipo_tarifa="PRO", valor=18300)
+    validar_contra_homologador([registro], HOMOLOGADOS)
+
+    assert registro.bloqueado
+    assert any("código SOAT" in h.problema for h in registro.hallazgos)
+
+
+def test_pro_con_valor_normal_no_se_marca() -> None:
+    from src.app.domain.cargues.validators import validar_contra_homologador
+
+    registro = _cups("441302", tipo_tarifa="PRO", valor=527340)
+    validar_contra_homologador([registro], HOMOLOGADOS)
+
+    assert not registro.bloqueado
+
+
+def test_regulado_con_soat_distinto_al_homologado_bloquea() -> None:
+    from src.app.domain.cargues.validators import validar_contra_homologador
+
+    registro = _cups("441302", tipo_tarifa="UVB", codigo_ley="18301")
+    validar_contra_homologador([registro], HOMOLOGADOS)
+
+    assert registro.bloqueado
+    assert any("18300" in h.sugerencia for h in registro.hallazgos)
+
+
+@pytest.mark.parametrize("ley", ["38122", "38124"])
+def test_regulado_con_uno_de_varios_homologados_pasa(ley) -> None:
+    from src.app.domain.cargues.validators import validar_contra_homologador
+
+    registro = _cups("129M02", tipo_tarifa="UVB", codigo_ley=ley)
+    validar_contra_homologador([registro], HOMOLOGADOS)
+
+    assert not registro.bloqueado
+
+
+def test_cups_fuera_del_homologador_no_se_marca_y_se_cuenta() -> None:
+    from src.app.domain.cargues.validators import validar_contra_homologador
+
+    registro = _cups("999999", tipo_tarifa="UVB", codigo_ley="1234")
+    sin_cruce = validar_contra_homologador([registro], HOMOLOGADOS)
+
+    assert sin_cruce == 1
+    assert not registro.bloqueado
+
+
+def test_servicio_avisa_cuando_no_hay_homologador(tmp_path) -> None:
+    ruta = _crear_anexo(
+        tmp_path, "SERVICIOS", ["CUPS", "VALOR"], [["441302", 527340]]
+    )
+
+    resultado = cargues_service.procesar_anexo(ruta, rules.CARGUE_CUPS)
+
+    assert any(
+        "homologador" in h.problema for h in resultado.hallazgos_generales
+    )
+
+
+def test_servicio_bloquea_con_homologador(tmp_path) -> None:
+    ruta = _crear_anexo(
+        tmp_path, "SERVICIOS", ["CUPS", "VALOR"], [["441302", 18300], ["902216", 12000]]
+    )
+
+    resultado = cargues_service.procesar_anexo(
+        ruta, rules.CARGUE_CUPS, soat_por_cups=HOMOLOGADOS
+    )
+
+    assert resultado.resumen()["bloqueados"] == 1
+    assert len(resultado.listos) == 1
+
+
 def test_traslado_propio_no_se_bloquea() -> None:
     from src.app.domain.cargues.validators import validar_codigos_propios_y_traslados
 

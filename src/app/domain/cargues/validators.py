@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from collections.abc import Iterable, Mapping
 
 from src.app.domain.cargues import parsing, rules, sanitizer
 from src.app.domain.cargues.model import Hallazgo, Registro, Severidad
@@ -481,3 +482,81 @@ def validar_descripciones_repetidas(registros: list[Registro]) -> None:
                     sugerencia="verificar si son productos diferentes",
                 )
             )
+
+
+def _sin_ceros(texto: str) -> str:
+    return texto.strip().lstrip("0")
+
+
+def validar_contra_homologador(
+    registros: list[Registro],
+    soat_por_cups: Mapping[str, Iterable[str]],
+) -> int:
+    """Cruza cada CUPS con los códigos SOAT que el homologador le asigna.
+
+    - Tarifa propia cuyo valor es un SOAT homologado a ese CUPS: es el error
+      de cargar el código ley como si fuera el valor. GEMANET lo acepta sin
+      avisar, así que se bloquea aquí.
+    - Tarifa regulada cuyo código ley no es uno de los homologados: el
+      homólogo debe ser igual al del homologador.
+
+    Un CUPS puede tener varios SOAT; basta con que coincida con uno.
+    Los CUPS que el homologador no conoce no se marcan.
+
+    Returns:
+        Cantidad de registros cuyo CUPS no está en el homologador.
+    """
+
+    sin_cruce = 0
+
+    for registro in registros:
+        homologados = soat_por_cups.get(registro.codigo)
+        if not homologados:
+            if registro.codigo:
+                sin_cruce += 1
+            continue
+
+        normalizados = {_sin_ceros(str(s)) for s in homologados}
+        lista = ", ".join(sorted(str(s) for s in homologados))
+
+        if not registro.es_regulado:
+            if registro.valor is not None and _sin_ceros(str(registro.valor)) in normalizados:
+                registro.agregar(
+                    Hallazgo(
+                        fila=registro.fila,
+                        campo="valor",
+                        severidad=Severidad.BLOQUEANTE,
+                        problema=(
+                            f"el valor {registro.valor} es un código SOAT "
+                            f"homologado al CUPS {registro.codigo}"
+                        ),
+                        valor_original=str(registro.valor),
+                        regla=(
+                            "en tarifa PRO el campo 2 es el valor; un código "
+                            "SOAT va con UVB, UVT o UVR"
+                        ),
+                        sugerencia=(
+                            "si es regulado, indicar el manual; si es propio, "
+                            "corregir el valor"
+                        ),
+                    )
+                )
+            continue
+
+        if registro.codigo_ley and _sin_ceros(registro.codigo_ley) not in normalizados:
+            registro.agregar(
+                Hallazgo(
+                    fila=registro.fila,
+                    campo="codigo_ley",
+                    severidad=Severidad.BLOQUEANTE,
+                    problema=(
+                        f"el código ley '{registro.codigo_ley}' no es un "
+                        f"homologado del CUPS {registro.codigo}"
+                    ),
+                    valor_original=registro.codigo_ley,
+                    regla="el homólogo debe ser igual al del SUPERHOMOLOGADOR",
+                    sugerencia=f"homologados para este CUPS: {lista}",
+                )
+            )
+
+    return sin_cruce

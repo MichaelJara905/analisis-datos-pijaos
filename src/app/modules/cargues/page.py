@@ -12,8 +12,10 @@ import polars as pl
 import streamlit as st
 
 from src.app.components.layout import render_header
-from src.app.application import cargues_service
+from src.app.application import cargues_service, referencias_service
+from src.app.core.config import get_config
 from src.app.domain.cargues import rules, txt_writer
+from src.app.infrastructure.referencias.repositorio import ReferenciaNoDisponible
 from src.app.domain.cargues.model import ResultadoCargue, Severidad
 from src.app.infrastructure.excel.anexos import LecturaFallida
 from src.app.infrastructure.excel.workbook import create_excel_download
@@ -43,6 +45,18 @@ def _excel(filas: list[dict[str, object]], hoja: str) -> bytes:
     return create_excel_download(_tabla(filas), hoja)
 
 
+@st.cache_resource(show_spinner=False)
+def _soat_por_cups() -> dict[str, frozenset[str]] | None:
+    """Homologador CUPS -> SOAT; None si no hay carpeta de referencias."""
+
+    try:
+        return referencias_service.cargar_soat_por_cups(
+            get_config().referencias_path
+        )
+    except (ReferenciaNoDisponible, OSError, ValueError, KeyError):
+        return None
+
+
 @st.cache_data(show_spinner=False)
 def cached_procesar_anexo(
     datos: bytes,
@@ -50,6 +64,7 @@ def cached_procesar_anexo(
     tipo: str,
     hoja: str | None,
     fila_encabezado: int | None,
+    _soat_por_cups: dict[str, frozenset[str]] | None = None,
 ) -> ResultadoCargue:
     """Cachea el análisis para no releer el Excel en cada rerun."""
 
@@ -59,6 +74,7 @@ def cached_procesar_anexo(
         nombre_archivo=nombre,
         hoja=hoja,
         fila_encabezado=fila_encabezado,
+        soat_por_cups=_soat_por_cups,
     )
 
 
@@ -138,6 +154,7 @@ def _analizar(archivo, tipo: str, hoja: str, fila_encabezado: int) -> None:
                 tipo,
                 hoja or None,
                 fila_encabezado or None,
+                _soat_por_cups() if tipo == rules.CARGUE_CUPS else None,
             )
     except LecturaFallida as error:
         st.session_state.pop("cargue_resultado", None)

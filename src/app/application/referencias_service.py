@@ -86,6 +86,29 @@ def cargar_referencias(carpeta: str | Path) -> Referencias:
     return referencias
 
 
+def cargar_soat_por_cups(carpeta: str | Path) -> dict[str, frozenset[str]]:
+    """Solo el homologador: CUPS -> códigos SOAT que le corresponden.
+
+    Es la parte liviana de las referencias; no abre la Circular ni Máximos
+    y Mínimos. Lo usa la validación de los cargues CUPS.
+
+    Raises:
+        ReferenciaNoDisponible: si la carpeta no tiene el SUPERHOMOLOGADOR.
+    """
+
+    fuentes = repositorio.descubrir_fuentes(carpeta)
+    if fuentes.superhomologador is None:
+        raise ReferenciaNoDisponible(
+            f"No hay un archivo SUPERHOMOLOGADOR en '{carpeta}'."
+        )
+
+    acumulado: dict[str, set[str]] = {}
+    for fila in repositorio.cargar_homologador(fuentes.superhomologador):
+        acumulado.setdefault(fila["cups"], set()).add(fila["codigo_ley"])
+
+    return {cups: frozenset(leyes) for cups, leyes in acumulado.items()}
+
+
 # ============================================================
 # CONSULTAS
 # ============================================================
