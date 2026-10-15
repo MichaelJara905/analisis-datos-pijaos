@@ -56,6 +56,8 @@ CUPS         codigo;valor_o_codigo_ley;tipo;porcentaje;norma;
 - Sin tarifa numérica, incluido "BAJO COTIZACION"
 - Insumo marcado como tarifa regulada
 - Tarifa regulada sin código ley o con código ley mal formado
+- Traslado o propio (`PRO####`) marcado como regulado
+- Con homologador: `PRO` con un SOAT como valor, o código ley no homologado
 - Tipo de tarifa "SOAT" sin precisar UVB, UVR o UVT
 - Caracteres sin regla de reemplazo
 
@@ -65,6 +67,56 @@ CUPS         codigo;valor_o_codigo_ley;tipo;porcentaje;norma;
 - Descripciones repetidas con códigos distintos
 - Código leído como número, donde Excel pudo perder ceros a la izquierda
 - Tarifa propia con porcentaje distinto de cero
+
+## Validación de CUPS contra el homologador
+
+Con `--referencias CARPETA` (CLI) o `REFERENCIAS_PATH` (pantalla), el
+cargue CUPS se cruza con la hoja HOMOLOGADOR del SUPERHOMOLOGADOR:
+
+| Caso | Resultado |
+|---|---|
+| Tarifa `PRO` cuyo valor es un SOAT homologado a ese CUPS | **Bloquea** (es el código ley cargado como valor) |
+| Tarifa regulada con un código ley que no es homologado de ese CUPS | **Bloquea** (el homólogo debe ser igual; basta con uno de los varios que tenga) |
+| CUPS que el homologador no conoce | No se marca; el reporte dice cuántos no se pudieron cruzar |
+| Sin carpeta de referencias | Hallazgo general: "no se validó contra el homologador" |
+
+Límite conocido: un `PRO` con un valor que *parece* SOAT pero corresponde a
+otro código no se detecta; solo se compara contra los SOAT de ese CUPS.
+
+## Códigos CUPS, propios y traslados
+
+- CUPS: 6 caracteres `[0-9A-Z]` (casi siempre dígitos; a veces letras,
+  como `129M01` o `601T02`) o un propio `PRO####`.
+- Los **traslados** (`601T01`, `601T02`, `602T01`, `602T02`) y los
+  **propios** nunca llevan SOAT: con `UVB`, `UVT` o `UVR` el registro se bloquea.
+- Un CUPS de 5 dígitos se bloquea y el mensaje sugiere el cero inicial
+  perdido por Excel; nunca se corrige solo.
+- `_propios_pendientes.csv` junta los registros cuyo anexo dice "crear
+  propio" y los traslados. **El sistema no crea nada**: solo los separa.
+
+## Creación de propios
+
+```bash
+python -m src.app.application.cli_propios propios.xlsx --ultimo-pro PRO5715 --salida salidas/
+```
+
+`propios.xlsx` (o `.csv`) trae NOMBRE, VALOR y CUPS. Genera, juntos:
+
+| Archivo | Contenido |
+|---|---|
+| `_creacion.txt` | `nombre\|PRO####\|valor\|CUPS` |
+| `_carga_cups.txt` | `PRO####;valor;PRO;0;0;` (se carga como un CUPS normal) |
+| `_asignacion.csv` | código que recibió cada solicitud y su estado |
+| `_hallazgos.csv` | correcciones, advertencias y bloqueos |
+
+- El consecutivo sigue el orden (después de `PRO5715`, `PRO5716`). Las
+  solicitudes bloqueadas no consumen número.
+- El último PRO usado hay que indicarlo: Máximos y Mínimos llega solo a
+  PRO4899 (2024). La salida imprime el último código asignado.
+- El nombre pasa por el mismo saneador (tildes y Ñ a letras normales,
+  ASCII); `|` se reemplaza por `-` y queda registrado como corrección.
+- Los archivos no terminan en salto de línea.
+- Opcional: `--referencias CARPETA` avisa si el CUPS no está en el homologador.
 
 ## Cuando aparezca un caso nuevo
 

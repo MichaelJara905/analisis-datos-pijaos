@@ -131,6 +131,13 @@ def _imprimir_resumen(resultado) -> None:
     for clave, valor in resumen.items():
         print(f"  {clave:20} {valor}")
 
+    pendientes = cargues_service.candidatos_a_propio(resultado)
+    if pendientes:
+        print(
+            f"\nPosibles propios por decidir: {len(pendientes)} "
+            "(no se crea ninguno; ver _propios_pendientes.csv)"
+        )
+
     bloqueantes = [
         h for h in resultado.hallazgos if h.severidad is Severidad.BLOQUEANTE
     ]

@@ -10,12 +10,13 @@ escribe en una carpeta de salida aparte, con fecha y hora en el nombre.
 from __future__ import annotations
 
 import csv
+import re
 from collections.abc import Iterable, Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO
 
-from src.app.domain.cargues import rules, txt_writer, validators
+from src.app.domain.cargues import parsing, rules, txt_writer, validators
 from src.app.infrastructure.excel import anexos
 from src.app.domain.cargues.model import (
     Hallazgo,
@@ -182,6 +183,46 @@ def filas_de_registros(resultado: ResultadoCargue) -> list[dict[str, object]]:
     return filas
 
 
+_CREAR_PROPIO = re.compile(r"\b(?:CREAR|CREACION)\b.*\bPROPIOS?\b")
+
+
+def candidatos_a_propio(resultado: ResultadoCargue) -> list[dict[str, object]]:
+    """Registros que probablemente necesitan un propio, separados para revisión.
+
+    El sistema no crea nada: solo los junta para que una persona decida.
+    Motivos: el anexo dice "crear propio" en alguna columna, o es un traslado.
+    """
+
+    candidatos: list[dict[str, object]] = []
+
+    for registro in resultado.registros:
+        motivos: list[str] = []
+
+        textos = [
+            parsing.normalizar_encabezado(valor)
+            for clave, valor in registro.crudo.items()
+            if clave != "_fila" and valor is not None
+        ]
+        if any(_CREAR_PROPIO.search(t) for t in textos):
+            motivos.append("el anexo dice 'crear propio'")
+        if registro.codigo in rules.CODIGOS_TRASLADO:
+            motivos.append("traslado: va como PRO o como propio")
+
+        if motivos:
+            candidatos.append(
+                {
+                    "fila": registro.fila,
+                    "codigo": registro.codigo,
+                    "descripcion": registro.descripcion_original,
+                    "valor_original": registro.valor_original,
+                    "estado": _estado(registro),
+                    "motivo": "; ".join(motivos),
+                }
+            )
+
+    return candidatos
+
+
 def _estado(registro: Registro) -> str:
     if registro.bloqueado:
         return "BLOQUEADO"
@@ -262,6 +303,14 @@ def generar_salidas(
             detalle,
             destino / f"{nombre}_registros.csv",
             list(detalle[0].keys()),
+        )
+
+    pendientes = candidatos_a_propio(resultado)
+    if pendientes:
+        rutas["propios_pendientes"] = _escribir_csv(
+            pendientes,
+            destino / f"{nombre}_propios_pendientes.csv",
+            list(pendientes[0].keys()),
         )
 
     return rutas
