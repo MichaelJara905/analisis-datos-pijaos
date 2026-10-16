@@ -178,6 +178,7 @@ TEXTOS_SIN_TARIFA = (
 ALIAS_DE_COLUMNAS = {
     CARGUE_INS: {
         "codigo": (
+            "IDSERVICIO",
             "COD INTERNO IPS",
             "CODIGO INTERNO IPS",
             "CODIGO INTERNO",
@@ -196,6 +197,7 @@ ALIAS_DE_COLUMNAS = {
             "NOMBRE INSUMO",
             "NOMBRE",
             "DETALLE",
+            "SERVICIO",
         ),
         "valor": (
             "TARIFA OFERTADA",
@@ -205,6 +207,8 @@ ALIAS_DE_COLUMNAS = {
             "TARIFA",
             "VALOR",
             "PRECIO",
+            "OFERTA 2026",
+            "OFERTA",
         ),
         "invima": (
             "COD INVIMA",
@@ -233,6 +237,8 @@ ALIAS_DE_COLUMNAS = {
             "TARIFA",
             "VALOR",
             "PRECIO",
+            "OFERTA 2026",
+            "OFERTA",
         ),
         "expediente": (
             "NO DE EXPEDIENTE",
@@ -243,6 +249,7 @@ ALIAS_DE_COLUMNAS = {
             "TARIFARIO",
             "TIPO DE TARIFA",
             "TIPO TARIFA",
+            "NOMBRE TARIFA",
         ),
         "codigo_ley": (
             "CODIGO HOMOLOGO SOAT",
@@ -262,6 +269,7 @@ ALIAS_DE_COLUMNAS = {
     CARGUE_CUPS: {
         "codigo": (
             "CUPS",
+            "CUPS/ PROPIO",
             "CODIGO CUPS",
             "CODIGO SERVICIO",
             "CODIGO",
@@ -276,6 +284,8 @@ ALIAS_DE_COLUMNAS = {
         "valor": (
             "VALOR (LIQUIDACION DE ACUERDO A MANUAL Y TARIFA OFERTADA",
             "VALOR LIQUIDACION",
+            "VALOR TARIFA CON DSCTO",
+            "VALOR CON DESCUENTO",
             "TARIFA OFERTADA",
             "VALOR",
             "TARIFA",
@@ -286,10 +296,12 @@ ALIAS_DE_COLUMNAS = {
             "MANUAL TARIFARIO",
             "TIPO DE TARIFA",
             "TIPO TARIFA",
+            "NOMBRE TARIFA",
         ),
         "codigo_ley": (
             "CODIGO HOMOLOGO SOAT / UVR SI ES ISS",
             "CODIGO HOMOLOGO SOAT",
+            "CODIGO SOAT HOMOLOGO",
             "CODIGO HOMOLOGO",
             "CODIGO LEY",
             "COD SOAT",
@@ -299,8 +311,18 @@ ALIAS_DE_COLUMNAS = {
             "TARIFA OFERTADA (% DE DESCUENTO)",
             "PORCENTAJE DE DESCUENTO",
             "% DE DESCUENTO",
+            "% DESCUENTO DE LA TARIFA",
+            "% TARIFA DSCTO",
             "PORCENTAJE",
             "DESCUENTO",
+        ),
+        # Código interno del prestador (opcional): sirve para explicar los
+        # CUPS repetidos con distinto código interno.
+        "codigo_interno": (
+            "CUPS CLINALSOFT",
+            "CODIGO CLINALSOFT",
+            "CODIGO INTERNO",
+            "COD INTERNO",
         ),
     },
 }

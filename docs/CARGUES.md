@@ -118,6 +118,45 @@ python -m src.app.application.cli_propios propios.xlsx --ultimo-pro PRO5715 --sa
 - Los archivos no terminan en salto de línea.
 - Opcional: `--referencias CARPETA` avisa si el CUPS no está en el homologador.
 
+## Conciliación con GEMANET (fase 1: solo informes)
+
+Compara UN anexo (un prestador, un contrato) con el reporte exportado de
+GEMANET del mismo tipo, para ver qué falta, en vez de eliminar los
+registros con error y dejar huecos.
+
+```bash
+python -m src.app.application.cli_conciliar anexo.xlsx --tipo CUPS \
+    --gemanet GEMA_CUPS.xlsx --referencias CARPETA_REFS --salida salidas/
+```
+
+`--tipo` es `CUPS`, `CUMS` o `INS`; `--gemanet` es el reporte de ese tipo.
+Procesa todas las hojas del anexo que corresponden al tipo (el resultado
+dice cuáles usó y cuáles omitió; `--hojas "A,B"` para forzarlas). No genera
+TXT. Informes:
+
+| Informe | Contenido |
+|---|---|
+| `_faltantes.csv` | Lo que no está en GEMANET: `LISTO PARA CARGAR` (con la línea que tendría) o `CON ERROR` (con el motivo) |
+| `_diferencias.csv` | Cargado con otro valor, tipo, manual o porcentaje |
+| `_solo_en_gemanet.csv` | Está en GEMANET y el anexo no lo trae |
+| `_inconsistencias.csv` | **Aparte**: códigos repetidos en el anexo (con valores, códigos internos y ubicación) y anomalías del reporte de GEMANET |
+| `_resumen.csv` | Conteos y hojas usadas |
+
+Reglas de la comparación:
+
+- La clave es el código. Los CUPS del reporte vienen como número
+  (`898015.0`): se normalizan y se completan a 6 dígitos.
+- Un código repetido en el anexo **no se decide**: va a inconsistencias y,
+  si no está en GEMANET, a faltantes con error.
+- Tarifa propia contra propia: se compara el valor. Regulada contra
+  regulada: el valor lo calcula GEMANET desde el manual, así que se
+  comparan el manual y el porcentaje. Un tipo de tarifario vacío en el
+  reporte significa regulado.
+- Cada tipo de error de GEMANET tiene su validación previa: "no se
+  encontró el CUPS" (formato y homologador), "ya existe en este tarifario"
+  (la conciliación), "valor regulado menor" y "no se encontró el
+  medicamento" (Circular 022 y Listado CUM: pendientes de implementar).
+
 ## Cuando aparezca un caso nuevo
 
 Casi todo se ajusta en `src/app/domain/cargues/rules.py`, sin tocar lógica:

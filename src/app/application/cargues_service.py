@@ -12,9 +12,12 @@ from __future__ import annotations
 import csv
 import re
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO
+
+from openpyxl import load_workbook
 
 from src.app.domain.cargues import parsing, rules, txt_writer, validators
 from src.app.infrastructure.excel import anexos
@@ -140,6 +143,102 @@ def procesar_anexo(
         fila_encabezado=anexo.fila_encabezado,
         mapeo_columnas=anexo.mapeo,
         registros=registros,
+        hallazgos_generales=generales,
+    )
+
+
+@dataclass
+class AnexoMultihoja:
+    """Todos los registros de un anexo con varias hojas del mismo tipo."""
+
+    tipo_cargue: str
+    registros: list[Registro]
+    hojas_usadas: list[str]
+    hojas_omitidas: list[str]
+    hallazgos_generales: list[Hallazgo]
+
+
+def procesar_anexo_multihoja(
+    origen: str | Path,
+    tipo_cargue: str,
+    *,
+    hojas: list[str] | None = None,
+    soat_por_cups: Mapping[str, Iterable[str]] | None = None,
+) -> AnexoMultihoja:
+    """Procesa todas las hojas de un anexo que corresponden a un tipo.
+
+    Un anexo suele traer varias hojas del mismo tipo (imagenología,
+    laboratorio, tablas...). Sin `hojas`, se toman las que se reconocen
+    para el tipo y cuyo nombre no apunta a otro tipo; en medicamentos e
+    insumos, si alguna hoja lo dice por su nombre, solo esas. El resultado
+    informa qué hojas entraron y cuáles no, para poder verificarlo.
+    """
+
+    libro = load_workbook(origen, data_only=True, read_only=True)
+    try:
+        nombres = list(libro.sheetnames)
+        candidatas = anexos.detectar_hojas(libro, tipo_cargue)
+    finally:
+        libro.close()
+
+    if hojas is not None:
+        pedidas = {h.strip() for h in hojas}
+        elegidas = [c for c in candidatas if c.nombre.strip() in pedidas]
+        inexistentes = pedidas - {c.nombre.strip() for c in elegidas}
+        if inexistentes:
+            raise anexos.LecturaFallida(
+                "Hojas no reconocidas para un cargue "
+                f"{tipo_cargue}: {', '.join(sorted(inexistentes))}. "
+                f"Hojas del archivo: {', '.join(nombres)}"
+            )
+    else:
+        elegidas = [
+            c for c in candidatas
+            if anexos._puntaje_por_nombre(c.nombre, tipo_cargue) >= 0
+        ]
+        if tipo_cargue != rules.CARGUE_CUPS:
+            con_pista = [
+                c for c in elegidas
+                if anexos._puntaje_por_nombre(c.nombre, tipo_cargue) > 0
+            ]
+            elegidas = con_pista or elegidas
+
+    if not elegidas:
+        raise anexos.LecturaFallida(
+            f"Ninguna hoja del anexo se reconoce como {tipo_cargue}. "
+            f"Hojas del archivo: {', '.join(nombres)}"
+        )
+
+    registros: list[Registro] = []
+    generales: list[Hallazgo] = []
+    vistos: set[str] = set()
+
+    for hoja in sorted(elegidas, key=lambda h: nombres.index(h.nombre)):
+        resultado = procesar_anexo(
+            origen,
+            tipo_cargue,
+            nombre_archivo=Path(origen).name,
+            hoja=hoja.nombre,
+            fila_encabezado=hoja.fila_encabezado,
+            soat_por_cups=soat_por_cups,
+        )
+        for registro in resultado.registros:
+            registro.hoja = hoja.nombre.strip()
+        registros.extend(resultado.registros)
+
+        for hallazgo in resultado.hallazgos_generales:
+            if hallazgo.problema not in vistos:
+                vistos.add(hallazgo.problema)
+                generales.append(hallazgo)
+
+    usadas = [h.nombre.strip() for h in elegidas]
+    omitidas = [n.strip() for n in nombres if n.strip() not in usadas]
+
+    return AnexoMultihoja(
+        tipo_cargue=tipo_cargue,
+        registros=registros,
+        hojas_usadas=usadas,
+        hojas_omitidas=omitidas,
         hallazgos_generales=generales,
     )
 
