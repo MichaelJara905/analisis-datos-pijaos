@@ -44,7 +44,7 @@ CUPS         codigo;valor_o_codigo_ley;tipo;porcentaje;norma;
 
 - Tildes y Ñ
 - `N°` → `NRO`; `°` suelto → ` GRADOS`
-- `Ø ø` → `D` · `º ª` → `O` `A` · `® ™` → `(R)` `(TM)` · `Ф` → se elimina
+- `Ø ø` → `D` · `º ª` → `O` `A` · `® ™` → `(R)` `(TM)` · `Ф Φ φ` → se eliminan
 - `;` → `,`
 - Valor redondeado al peso, al estilo de Excel (0,5 sube)
 - Porcentaje de fracción a entero: `-0,1` → `-10`

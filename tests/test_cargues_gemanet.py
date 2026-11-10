@@ -597,3 +597,26 @@ def test_caracteres_equivalentes_pasan_a_ascii(original, esperado) -> None:
     saneada, cambios = sanitizer.sanear_descripcion(original)
     assert saneada == esperado
     assert cambios and not sanitizer.caracteres_no_soportados(saneada)
+
+
+@pytest.mark.parametrize(
+    ("original", "esperado"),
+    [
+        ("TORNILLO Φ 3.5 MM", "TORNILLO 3.5 MM"),
+        ("GUIA φ1.2 MM NITINOL", "GUIA 1.2 MM NITINOL"),
+        ("Φ 2.7 MM", "2.7 MM"),
+    ],
+)
+def test_phi_griega_se_elimina_y_queda_registrada(original, esperado) -> None:
+    saneada, cambios = sanitizer.sanear_descripcion(original)
+    assert saneada == esperado
+    assert any("(eliminado)" in cambio for cambio in cambios)
+
+
+def test_phi_ya_no_bloquea_el_registro() -> None:
+    registro = construir_registro(
+        {"_fila": 9, "codigo": "INS1", "descripcion": "TORNILLO Φ 3.5 MM", "valor": 1000},
+        rules.CARGUE_INS,
+    )
+    assert not registro.bloqueado
+    assert registro.descripcion == "TORNILLO 3.5 MM"

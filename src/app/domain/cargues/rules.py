@@ -107,6 +107,8 @@ REEMPLAZOS_DE_CARACTERES = {
     "\u00a0": " ",   # espacio duro
     "×": "X",
     # Equivalentes ASCII sin ambigüedad (aparecieron en el anexo de Traumasur)
+    "Φ": "",         # phi griega (símbolo de diámetro): se elimina, como la Ф
+    "φ": "",
     "Ⅰ": "I",
     "Ⅱ": "II",
     "Ⅲ": "III",
