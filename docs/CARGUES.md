@@ -123,6 +123,18 @@ python -m src.app.application.cli_propios propios.xlsx --ultimo-pro PRO5715 --sa
 - Los archivos no terminan en salto de línea.
 - Opcional: `--referencias CARPETA` avisa si el CUPS no está en el homologador.
 
+## Flujo completo para dejar un anexo listo
+
+1. Exporta de GEMANET el reporte del tarifario del prestador (del tipo que
+   vas a cargar: insumos, servicios o medicamentos).
+2. **Conciliación GEMANET**: sube el anexo y ese reporte.
+3. Descarga **Devolver al prestador** (lo bloqueado) y el **TXT** (solo lo que
+   falta en GEMANET y es válido) y súbelo a GEMANET.
+4. Cuando el prestador responda, vuelve a subir el anexo corregido.
+
+Si el prestador no tiene nada cargado todavía, **Cargues GEMANET** hace el
+mismo análisis sin el cruce.
+
 ## Conciliación con GEMANET
 
 Compara UN anexo (un prestador, un contrato) con el reporte exportado de

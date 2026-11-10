@@ -235,14 +235,25 @@ def conciliar(
 
         if gema is None:
             if repetido:
-                resultado.faltan_con_error.append(
-                    _fila(
-                        registro,
-                        "CON ERROR",
-                        f"código repetido {len(grupo)} veces en el anexo: "
-                        "decidir cuál se carga",
-                    )
+                # Cada fila repetida va al informe (el prestador debe ver todas),
+                # con dónde están y qué valores traen.
+                ubicaciones = "; ".join(f"{r.hoja} fila {r.fila}" if r.hoja else f"fila {r.fila}" for r in grupo[:8])
+                valores = sorted({str(r.valor) for r in grupo if r.valor is not None})
+                base = (
+                    f"código repetido {len(grupo)} veces en el anexo ({ubicaciones}"
+                    + ("…" if len(grupo) > 8 else "")
+                    + (f"; valores: {', '.join(valores)}" if len(valores) > 1 else "")
+                    + "): decidir cuál se carga"
                 )
+                for repetida in grupo:
+                    otros = [
+                        h.problema
+                        for h in repetida.hallazgos
+                        if h.severidad is Severidad.BLOQUEANTE and "veces en el anexo" not in h.problema
+                    ]
+                    resultado.faltan_con_error.append(
+                        _fila(repetida, "CON ERROR", "; ".join([base] + otros))
+                    )
             elif registro.bloqueado:
                 resultado.faltan_con_error.append(
                     _fila(registro, "CON ERROR", _motivos_de_bloqueo(registro))

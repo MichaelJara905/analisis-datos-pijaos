@@ -97,9 +97,14 @@ def render() -> None:
     )
     st.title("Conciliación con GEMANET")
     st.write(
-        "Sube el anexo del prestador y el reporte de GEMANET del mismo tipo. "
-        "El TXT que se descarga trae **solo** lo que falta y es válido; los "
-        "errores, los repetidos y las diferencias salen aparte."
+        "Es el proceso completo: valida el anexo, bloquea lo que no se debe cargar "
+        "(repetidos, códigos inválidos...), descarta lo que ya está en GEMANET y "
+        "deja el TXT **solo** con lo que falta y es válido. Sube el anexo del "
+        "prestador y el reporte de su tarifario en GEMANET (del mismo tipo)."
+    )
+    st.caption(
+        "Salidas: el TXT para subir, el documento para devolver al prestador "
+        "(CODIGO - DESCRIPCION - VALOR de lo bloqueado) y los informes de diferencias."
     )
 
     columnas = st.columns([1, 2, 2])

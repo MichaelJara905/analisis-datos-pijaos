@@ -97,6 +97,11 @@ def render_carga() -> None:
         "corrige lo que se puede corregir con seguridad, señala lo que hay "
         "que revisar y genera el archivo TXT."
     )
+    st.info(
+        "¿El prestador ya tiene códigos cargados en GEMANET? Usa **Conciliación "
+        "GEMANET** con el reporte de su tarifario: hace este mismo análisis, "
+        "descarta lo que ya está cargado y deja el TXT solo con lo que falta."
+    )
 
     archivo = st.file_uploader(
         "Anexo tarifario (Excel)",

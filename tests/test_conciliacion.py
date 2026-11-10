@@ -87,7 +87,11 @@ def test_repetido_no_se_decide_y_va_a_inconsistencias() -> None:
         rules.CARGUE_CUPS,
     )
     assert not resultado.faltan_listos
-    assert "decidir cuál se carga" in resultado.faltan_con_error[0]["motivo"]
+    # Cada fila repetida va al informe, con dónde está cada una y los valores.
+    assert [f["fila"] for f in resultado.faltan_con_error] == [2, 9]
+    motivo = resultado.faltan_con_error[0]["motivo"]
+    assert "decidir cuál se carga" in motivo and "fila 2" in motivo and "fila 9" in motivo
+    assert "valores: 1000, 2000" in motivo
     assert resultado.inconsistencias[0]["tipo"] == "código repetido"
     assert "1000" in resultado.inconsistencias[0]["detalle"]
     assert "2000" in resultado.inconsistencias[0]["detalle"]
