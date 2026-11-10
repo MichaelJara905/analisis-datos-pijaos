@@ -261,30 +261,60 @@ def render_detalle(resultado: ResultadoCargue) -> None:
             st.code(vista, language="text")
 
 
-def render_descargas(resultado: ResultadoCargue) -> None:
-    st.subheader("Descargas")
+def render_devolucion(resultado: ResultadoCargue, nombre: str) -> None:
+    """Documento con lo bloqueado, para devolverlo al prestador."""
 
-    if not resultado.listos:
-        st.error("No se genera TXT porque ningún registro quedó listo.")
-        return
+    por_corregir = notificacion_service.filas_por_corregir_de_registros(
+        resultado.bloqueados, resultado.hoja
+    )
+    hoja_excel = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
-    nombre = f"{resultado.tipo_cargue}_{resultado.archivo_origen.rsplit('.', 1)[0]}"
+    st.markdown("**Para el prestador**")
+    columnas = st.columns(2)
 
-    columnas = st.columns(4)
+    devolucion = notificacion_service.excel_de_devolucion(por_corregir)
+    if devolucion is not None:
+        columnas[0].download_button(
+            f"Devolver al prestador ({len(por_corregir)} bloqueados)",
+            data=devolucion,
+            file_name=f"{nombre}_devolucion_prestador.xlsx",
+            mime=hoja_excel,
+            help=(
+                "CODIGO - DESCRIPCION - VALOR de lo bloqueado (repetidos, códigos "
+                "inválidos...), con el motivo y la fila del anexo."
+            ),
+            type="primary",
+            use_container_width=True,
+        )
+    else:
+        columnas[0].success("No hay nada que devolver al prestador.")
 
     notificacion = notificacion_service.excel_de_notificacion(
         notificacion_service.filas_para_parametrizar(resultado.listos),
-        notificacion_service.filas_por_corregir_de_registros(resultado.bloqueados),
+        por_corregir,
     )
     if notificacion is not None:
-        columnas[3].download_button(
-            "Notificar al prestador",
+        columnas[1].download_button(
+            "Notificar lo que se parametriza",
             data=notificacion,
             file_name=f"{nombre}_notificacion.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            help="CODIGO - DESCRIPCION - VALOR de lo que se parametriza y lo que debe corregir el prestador.",
+            mime=hoja_excel,
+            help="CODIGO - DESCRIPCION - VALOR de lo que se carga y, en otra hoja, lo que debe corregir.",
             use_container_width=True,
         )
+
+
+def render_descargas(resultado: ResultadoCargue) -> None:
+    st.subheader("Descargas")
+
+    nombre = f"{resultado.tipo_cargue}_{resultado.archivo_origen.rsplit('.', 1)[0]}"
+
+    if not resultado.listos:
+        st.error("No se genera TXT porque ningún registro quedó listo.")
+        render_devolucion(resultado, nombre)
+        return
+
+    columnas = st.columns(3)
 
     columnas[0].download_button(
         "Archivo TXT para GEMANET",
@@ -314,6 +344,8 @@ def render_descargas(resultado: ResultadoCargue) -> None:
         mime=hoja_excel,
         use_container_width=True,
     )
+
+    render_devolucion(resultado, nombre)
 
     st.caption(
         "El TXT incluye únicamente los registros listos. Los bloqueados "

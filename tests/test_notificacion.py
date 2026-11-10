@@ -14,7 +14,7 @@ from src.app.application import (
 )
 from src.app.domain.cargues import rules, txt_writer
 from src.app.domain.cargues.conciliacion import RegistroGemanet, clave_codigo, conciliar
-from src.app.domain.cargues.model import Registro, Severidad
+from src.app.domain.cargues.model import Hallazgo, Registro, Severidad
 from src.app.domain.cargues.validators import construir_registro
 
 
@@ -53,14 +53,17 @@ def test_hoja_con_codigo_descripcion_y_valor_y_codigos_como_texto() -> None:
 def test_la_segunda_hoja_trae_lo_que_el_prestador_debe_corregir() -> None:
     excel = notificacion_service.excel_de_notificacion(
         [["1", "A", 10]],
-        [["2", "B", 20, "código repetido 2 veces en el anexo"]],
+        [["2", "B", 20, "código repetido 2 veces en el anexo", "fila 7"]],
     )
 
     libro = _leer(excel)
 
     assert libro.sheetnames == ["Para parametrizar", "Por corregir"]
-    assert [c.value for c in libro["Por corregir"][1]] == ["CODIGO", "DESCRIPCION", "VALOR", "MOTIVO"]
+    assert [c.value for c in libro["Por corregir"][1]] == [
+        "CODIGO", "DESCRIPCION", "VALOR", "MOTIVO", "UBICACION",
+    ]
     assert libro["Por corregir"]["D2"].value == "código repetido 2 veces en el anexo"
+    assert libro["Por corregir"]["E2"].value == "fila 7"
 
 
 def test_sin_nada_que_notificar_no_hay_documento() -> None:
@@ -91,6 +94,109 @@ def test_el_cargue_genera_el_documento_de_notificacion(tmp_path) -> None:
     assert libro["Para parametrizar"]["A2"].value == "000123"
     assert libro["Para parametrizar"]["B2"].value == "TORNILLO AEI"      # la descripción saneada
     assert libro["Por corregir"]["D2"].value == "el código está vacío"
+
+
+def _anexo_con_problemas(tmp_path):
+    libro = Workbook()
+    hoja = libro.active
+    hoja.title = "INSUMOS"
+    hoja.append(["COD INTERNO IPS", "DESCRIPCION", "TARIFA OFERTADA"])
+    hoja.append(["A-100", "GASA ESTERIL", 1500])                           # bueno
+    hoja.append(["B-200", "TORNILLO 3.5 MM", 2000])                        # descripción repetida
+    hoja.append(["B-201", "TORNILLO 3.5 MM", 2100])                        # descripción repetida
+    hoja.append(["C-300", "CATETER", 3000])                                # código repetido
+    hoja.append(["C-300", "CATETER LARGO", 3500])                          # código repetido
+    hoja.append(["N/A", "PRODUCTO SIN CODIGO", 10])                        # relleno
+    hoja.append(["SEGÚN REQUERIMIENTO QUIRURGICO", "PLACA A MEDIDA", 99])  # texto
+    hoja.append(["REF 8120 \nREF 8121 \nREF 8122", "PROTESIS PROVOX", 50]) # varios códigos
+    ruta = tmp_path / "anexo.xlsx"
+    libro.save(ruta)
+    return ruta
+
+
+def test_repetidos_y_codigos_que_no_son_codigos_se_bloquean_con_su_motivo(tmp_path) -> None:
+    resultado = cargues_service.procesar_anexo(_anexo_con_problemas(tmp_path), rules.CARGUE_INS)
+
+    estados = {r.codigo: r.bloqueado for r in resultado.registros}
+    assert [r.codigo for r in resultado.listos] == ["A-100"]
+    assert estados["N/A"] and estados["C-300"] and estados["B-200"] and estados["B-201"]
+
+    def motivos(codigo):
+        return " ".join(
+            h.problema for r in resultado.registros if r.codigo == codigo
+            for h in r.hallazgos if h.severidad is Severidad.BLOQUEANTE
+        )
+
+    assert "texto de relleno" in motivos("N/A")
+    assert "varios códigos en la misma celda" in motivos("REF 8120 \nREF 8121 \nREF 8122")
+    assert "no son ASCII" in motivos("SEGÚN REQUERIMIENTO QUIRURGICO")
+    assert "la descripción se repite en 2 registros" in motivos("B-200")
+    assert "aparece 2 veces" in motivos("C-300")
+
+
+def test_codigos_de_insumo_legitimos_no_se_confunden_con_texto() -> None:
+    for codigo in ("A.DERM", "CR-L", "COVIDIEN", "MPF-BT 50 35-S", "N/A-01", "128-822/02"):
+        assert not _ins(codigo).bloqueado, codigo
+
+
+def test_sin_acento_el_texto_tambien_se_detecta_por_su_largo() -> None:
+    registro = _ins("SEGUN REQUERIMIENTO QUIRURGICO")
+
+    assert registro.bloqueado
+    assert any("parece un texto" in h.problema for h in registro.hallazgos)
+
+
+def test_el_documento_de_devolucion_trae_solo_lo_bloqueado_ordenado_por_codigo(tmp_path) -> None:
+    resultado = cargues_service.procesar_anexo(_anexo_con_problemas(tmp_path), rules.CARGUE_INS)
+
+    rutas = cargues_service.generar_salidas(resultado, tmp_path / "salidas")
+    hoja = load_workbook(rutas["devolucion"])["Para devolver al prestador"]
+
+    assert [c.value for c in hoja[1]] == ["CODIGO", "DESCRIPCION", "VALOR", "MOTIVO", "UBICACION"]
+    codigos = [fila[0] for fila in hoja.iter_rows(min_row=2, max_col=1, values_only=True)]
+    assert "A-100" not in codigos                         # el bueno no se devuelve
+    assert codigos == sorted(codigos, key=str.strip)      # repetidos juntos, por código
+    assert len(codigos) == 7
+    ubicaciones = [fila[0] for fila in hoja.iter_rows(min_row=2, min_col=5, max_col=5, values_only=True)]
+    assert all(u.startswith("INSUMOS - fila ") for u in ubicaciones)
+
+
+def test_sin_bloqueados_no_hay_documento_de_devolucion(tmp_path) -> None:
+    libro = Workbook()
+    hoja = libro.active
+    hoja.append(["COD INTERNO IPS", "DESCRIPCION", "TARIFA OFERTADA"])
+    hoja.append(["A-1", "GASA", 100])
+    ruta = tmp_path / "limpio.xlsx"
+    libro.save(ruta)
+
+    resultado = cargues_service.procesar_anexo(ruta, rules.CARGUE_INS)
+
+    assert "devolucion" not in cargues_service.generar_salidas(resultado, tmp_path / "s")
+
+
+def test_en_insumos_103_y_00103_son_codigos_distintos() -> None:
+    assert clave_codigo("103", completar_ceros=False) != clave_codigo("00103", completar_ceros=False)
+    assert clave_codigo("103") == clave_codigo("000103")          # en servicios sí se completan
+
+    gema = RegistroGemanet(codigo="00103", valor=1.0, tipo="PRO", porcentaje="0",
+                           descripcion="", activo="Si", fila=2)
+    resultado = conciliar([_reg("103")], {"00103": gema}, rules.CARGUE_INS)
+
+    assert [f["codigo"] for f in resultado.faltan_listos] == ["103"]
+
+
+def test_la_conciliacion_genera_el_documento_de_devolucion() -> None:
+    registro = _reg("X-1", valor=10)
+    registro.hallazgos.append(
+        Hallazgo(fila=2, campo="codigo", severidad=Severidad.BLOQUEANTE, problema="código repetido")
+    )
+    registro.hoja = "SERVICIOS"
+    resultado = conciliar([registro], {}, rules.CARGUE_INS)
+
+    excel = conciliacion_service.construir_devolucion(resultado)
+
+    hoja = _leer(excel)["Para devolver al prestador"]
+    assert hoja["A2"].value == "X-1" and hoja["E2"].value == "SERVICIOS - fila 2"
 
 
 def test_la_conciliacion_genera_el_documento_de_notificacion(tmp_path) -> None:

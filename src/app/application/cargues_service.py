@@ -405,9 +405,17 @@ def generar_salidas(
             list(detalle[0].keys()),
         )
 
+    por_corregir = notificacion_service.filas_por_corregir_de_registros(
+        resultado.bloqueados, resultado.hoja
+    )
+    devolucion = notificacion_service.excel_de_devolucion(por_corregir)
+    if devolucion is not None:
+        rutas["devolucion"] = destino / f"{nombre}_devolucion_prestador.xlsx"
+        rutas["devolucion"].write_bytes(devolucion)
+
     excel = notificacion_service.excel_de_notificacion(
         notificacion_service.filas_para_parametrizar(registros),
-        notificacion_service.filas_por_corregir_de_registros(resultado.bloqueados),
+        por_corregir,
     )
     if excel is not None:
         rutas["notificacion"] = destino / f"{nombre}_notificacion.xlsx"

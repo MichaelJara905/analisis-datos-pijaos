@@ -12,8 +12,8 @@ from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
-ANCHOS = {"CODIGO": 24, "DESCRIPCION": 72, "VALOR": 16, "MOTIVO": 70}
-COLUMNAS_DE_TEXTO = ("CODIGO", "DESCRIPCION", "MOTIVO")
+ANCHOS = {"CODIGO": 24, "DESCRIPCION": 72, "VALOR": 16, "MOTIVO": 90, "UBICACION": 30}
+COLUMNAS_DE_TEXTO = ("CODIGO", "DESCRIPCION", "MOTIVO", "UBICACION")
 
 
 def crear_excel(hojas: dict[str, tuple[list[str], list[list[object]]]]) -> bytes:

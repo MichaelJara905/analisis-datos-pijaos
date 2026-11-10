@@ -54,6 +54,13 @@ CUPS         codigo;valor_o_codigo_ley;tipo;porcentaje;norma;
 - Código vacío o con formato inválido
 - Descripción vacía
 - Sin tarifa numérica, incluido "BAJO COTIZACION"
+- **Código repetido**: se bloquean TODAS las filas de ese código (el sistema
+  no decide cuál queda); el motivo dice en qué filas está y con qué valores
+- **Descripción repetida** en dos o más registros (ya saneada)
+- **Código de insumo que no es un código**: texto de relleno (`N/A`, `SIN
+  CODIGO`...), más de 25 caracteres, más de 2 espacios, varios códigos en la
+  misma celda (separados por saltos de línea), `;` o caracteres no ASCII
+  (incluido el espacio duro). El motivo dice cuál de esas es
 - Insumo marcado como tarifa regulada
 - Tarifa regulada sin código ley o con código ley mal formado
 - Traslado o propio (`PRO####`) marcado como regulado
@@ -63,8 +70,6 @@ CUPS         codigo;valor_o_codigo_ley;tipo;porcentaje;norma;
 
 **Avisa, pero genera**
 
-- Códigos duplicados, como los CUPS adulto/pediátrico
-- Descripciones repetidas con códigos distintos
 - Código leído como número, donde Excel pudo perder ceros a la izquierda
 - Tarifa propia con porcentaje distinto de cero
 
@@ -179,19 +184,23 @@ Reglas de la comparación:
 - Para comparar con GEMANET se ignoran los espacios de los extremos del
   código; el código que se escribe no se modifica.
 
-## Documento para notificar al prestador
+## Documentos para el prestador
 
-`CODIGO - DESCRIPCION - VALOR`, en Excel, con los códigos como texto para que
-Excel no les quite los ceros. Disponible en:
+Excel con `CODIGO | DESCRIPCION | VALOR`, con los códigos como texto para que
+Excel no les quite los ceros. Hay dos:
 
-- **Conciliación GEMANET:** botón *Documento para notificar al prestador*, y el
-  archivo `_notificacion.xlsx` de la terminal.
-- **Cargues GEMANET:** botón *Notificar al prestador*, y `_notificacion.xlsx`.
+**Devolución** (`_devolucion_prestador.xlsx`): SOLO lo bloqueado (repetidos,
+códigos que no son códigos, etc.), ordenado por código para que las filas
+repetidas queden juntas. Además de las tres columnas trae `MOTIVO` (qué está
+mal y, en los repetidos, en qué filas y con qué valores) y `UBICACION` (hoja y
+fila del anexo). Si no hay nada bloqueado, no se genera.
 
-Hoja **Para parametrizar**: lo que se va a cargar (la descripción es la que
-queda en GEMANET, ya saneada). Hoja **Por corregir** (solo si hay): lo que el
-prestador debe corregir, con el motivo. Si no hay nada que notificar, no se
-genera.
+- Cargues GEMANET: botón *Devolver al prestador*.
+- Conciliación GEMANET: botón *Devolver al prestador*.
+
+**Notificación** (`_notificacion.xlsx`): hoja *Para parametrizar* con lo que se
+va a cargar (la descripción es la que queda en GEMANET, ya saneada) y, si hay,
+hoja *Por corregir* con lo bloqueado.
 
 ## Cuando aparezca un caso nuevo
 

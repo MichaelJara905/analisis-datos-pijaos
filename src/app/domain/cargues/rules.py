@@ -162,6 +162,18 @@ PATRONES_DE_CODIGO = {
     CARGUE_INS: PATRON_CODIGO_INS,
 }
 
+# Textos de relleno que a veces vienen en la columna de código (anexos reales).
+CODIGOS_DE_RELLENO = (
+    "N/A", "NA", "N.A.", "NO APLICA", "SIN CODIGO", "S/C", "S/N",
+    "PENDIENTE", "POR DEFINIR", "POR ASIGNAR",
+)
+
+# Un código de insumo con más texto que esto parece una frase, no un código.
+# Calibrado con lo que GEMANET ya tiene (Traumasur: largo máximo 19, nunca más
+# de 2 espacios) y con los anexos (varios códigos pegados en una celda).
+LARGO_MAXIMO_CODIGO_INS = 25
+ESPACIOS_MAXIMOS_CODIGO_INS = 2
+
 # Códigos ley del superhomologador: de 4 a 6 dígitos.
 PATRON_CODIGO_LEY = r"^\d{4,6}$"
 

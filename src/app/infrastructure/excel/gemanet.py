@@ -52,7 +52,9 @@ def _a_numero(texto: str) -> float | None:
         return None
 
 
-def leer_reporte(origen: str | Path) -> ReporteGemanet:
+def leer_reporte(origen: str | Path, *, completar_ceros: bool = True) -> ReporteGemanet:
+    """Lee el reporte. `completar_ceros` solo para servicios (ver `clave_codigo`)."""
+
     ruta = Path(origen)
     libro = load_workbook(ruta, data_only=True, read_only=True)
 
@@ -93,7 +95,7 @@ def leer_reporte(origen: str | Path) -> ReporteGemanet:
             if codigo == "":
                 continue
 
-            clave = clave_codigo(codigo)
+            clave = clave_codigo(codigo, completar_ceros=completar_ceros)
             registro = RegistroGemanet(
                 codigo=clave,
                 valor=_a_numero(celda(fila, "valor")),

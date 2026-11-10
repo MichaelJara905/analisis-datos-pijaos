@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from src.app.application import cargues_service, notificacion_service
-from src.app.domain.cargues import conciliacion, txt_writer
+from src.app.domain.cargues import conciliacion, rules, txt_writer
 from src.app.domain.cargues.model import Hallazgo, Registro
 from src.app.infrastructure.excel import gemanet
 
@@ -35,7 +35,9 @@ def conciliar_anexo(
     procesado = cargues_service.procesar_anexo_multihoja(
         anexo, tipo_cargue, hojas=hojas, soat_por_cups=soat_por_cups
     )
-    reporte = gemanet.leer_reporte(reporte_gemanet)
+    reporte = gemanet.leer_reporte(
+        reporte_gemanet, completar_ceros=tipo_cargue == rules.CARGUE_CUPS
+    )
 
     def linea(registro: Registro) -> str:
         try:
@@ -69,6 +71,14 @@ def construir_txt(resultado: conciliacion.ResultadoConciliacion) -> bytes:
     return txt_writer.construir_bytes(resultado.a_cargar, resultado.tipo_cargue)
 
 
+def construir_devolucion(resultado: conciliacion.ResultadoConciliacion) -> bytes | None:
+    """CODIGO - DESCRIPCION - VALOR de lo bloqueado, para devolverlo al prestador."""
+
+    return notificacion_service.excel_de_devolucion(
+        notificacion_service.filas_por_corregir_de_informe(resultado.faltan_con_error)
+    )
+
+
 def construir_notificacion(resultado: conciliacion.ResultadoConciliacion) -> bytes | None:
     """CODIGO - DESCRIPCION - VALOR de lo que se va a parametrizar, y en otra
     hoja lo que el prestador debe corregir (con el motivo)."""
@@ -82,6 +92,8 @@ def construir_notificacion(resultado: conciliacion.ResultadoConciliacion) -> byt
 def verificar_txt(
     contenido: bytes,
     gemanet: Mapping[str, conciliacion.RegistroGemanet],
+    *,
+    completar_ceros: bool = True,
 ) -> list[str]:
     """Verificación final del TXT ya armado, leyéndolo como lo leerá GEMANET.
 
@@ -95,7 +107,7 @@ def verificar_txt(
     problemas: list[str] = []
     vistos: set[str] = set()
     for numero, linea in enumerate(contenido.decode("ascii").split("\r\n"), start=1):
-        codigo = conciliacion.clave_codigo(linea.split(";")[0])
+        codigo = conciliacion.clave_codigo(linea.split(";")[0], completar_ceros=completar_ceros)
         if codigo in vistos:
             problemas.append(f"línea {numero}: el código {codigo} se repite en el TXT")
         vistos.add(codigo)
@@ -127,7 +139,11 @@ def generar_informes(
 
     if con_txt and resultado.a_cargar:
         contenido = construir_txt(resultado)
-        problemas = verificar_txt(contenido, reporte.registros if reporte else {})
+        problemas = verificar_txt(
+            contenido,
+            reporte.registros if reporte else {},
+            completar_ceros=resultado.tipo_cargue == rules.CARGUE_CUPS,
+        )
         if problemas:
             raise TxtInconsistente("; ".join(problemas[:5]))
         rutas["txt"] = destino / f"{nombre}_para_cargar.txt"
@@ -143,6 +159,11 @@ def generar_informes(
     for clave, filas in informes.items():
         if filas:
             rutas[clave] = _csv(filas, destino / f"{nombre}_{clave}.csv")
+
+    devolucion = construir_devolucion(resultado)
+    if devolucion is not None:
+        rutas["devolucion"] = destino / f"{nombre}_devolucion_prestador.xlsx"
+        rutas["devolucion"].write_bytes(devolucion)
 
     excel = construir_notificacion(resultado)
     if excel is not None:

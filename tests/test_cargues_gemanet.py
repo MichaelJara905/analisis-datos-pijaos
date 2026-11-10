@@ -265,17 +265,29 @@ def test_bajo_cotizacion_queda_bloqueado() -> None:
     assert construir_registro(fila, rules.CARGUE_CUPS).bloqueado
 
 
-def test_duplicados_avisan_pero_no_bloquean() -> None:
+def test_codigos_repetidos_se_bloquean_todos_y_dicen_donde_estan() -> None:
     filas = [
         {"_fila": 11, "codigo": "441302", "descripcion": "EGD", "valor": 527340},
         {"_fila": 12, "codigo": "441302", "descripcion": "EGD PEDIATRICA", "valor": 1028969},
+        {"_fila": 13, "codigo": "441303", "descripcion": "OTRO", "valor": 1000},
     ]
     registros = [construir_registro(f, rules.CARGUE_CUPS) for f in filas]
 
     validar_duplicados(registros)
 
-    assert all(not r.bloqueado for r in registros)
-    assert all(r.tiene_advertencias for r in registros)
+    assert registros[0].bloqueado and registros[1].bloqueado
+    assert not registros[2].bloqueado
+    problema = next(h.problema for h in registros[0].hallazgos if "aparece" in h.problema)
+    assert "2 veces" in problema and "11, 12" in problema
+    assert "527340" in problema and "1028969" in problema      # los valores distintos
+
+
+def test_el_repetido_se_detecta_aunque_difiera_el_espacio_final() -> None:
+    registros = [_ins("CS-093"), _ins("CS-093 ")]
+
+    validar_duplicados(registros)
+
+    assert all(r.bloqueado for r in registros)
 
 
 def test_descripcion_con_punto_y_coma_se_corrige_y_no_bloquea() -> None:

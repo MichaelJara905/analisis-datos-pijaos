@@ -71,18 +71,19 @@ class ResultadoConciliacion:
 # CLAVES Y COMPARACIÓN
 # ============================================================
 
-def clave_codigo(texto: object) -> str:
-    """Forma comparable de un código.
+def clave_codigo(texto: object, *, completar_ceros: bool = True) -> str:
+    """Forma comparable de un código (solo para comparar; el código no se toca).
 
     El reporte de GEMANET guarda los CUPS como número (898015.0) y pierde
-    los ceros iniciales; el anexo los trae como texto. Se quita el '.0' y
-    los códigos numéricos cortos se completan a 6 dígitos.
+    los ceros iniciales; el anexo los trae como texto. Se quita el '.0' y,
+    solo en servicios (`completar_ceros`), los códigos numéricos cortos se
+    completan a 6 dígitos. En insumos NO: '103' y '00103' son códigos distintos.
     """
 
     if texto is None:
         return ""
     limpio = re.sub(r"\.0+$", "", str(texto).strip().upper())
-    if limpio.isdigit() and len(limpio) < 6:
+    if completar_ceros and limpio.isdigit() and len(limpio) < 6:
         return limpio.zfill(6)
     return limpio
 
@@ -189,10 +190,11 @@ def conciliar(
     resultado = ResultadoConciliacion(tipo_cargue=tipo_cargue)
     linea = linea or (lambda _registro: "")
 
+    completar_ceros = tipo_cargue == rules.CARGUE_CUPS
     grupos: dict[str, list[Registro]] = defaultdict(list)
     for registro in registros:
         if registro.codigo:
-            grupos[clave_codigo(registro.codigo)].append(registro)
+            grupos[clave_codigo(registro.codigo, completar_ceros=completar_ceros)].append(registro)
 
     # --- Códigos repetidos en el anexo: reporte aparte, sin decidir ---
     for clave, grupo in grupos.items():

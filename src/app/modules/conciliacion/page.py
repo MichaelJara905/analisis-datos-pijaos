@@ -85,6 +85,7 @@ def _conciliar(anexo, reporte, tipo: str, hojas: str) -> dict | None:
         "reporte": gema,
         "txt": txt,
         "notificacion": conciliacion_service.construir_notificacion(resultado),
+        "devolucion": conciliacion_service.construir_devolucion(resultado),
         "nombre": prefijo,
     }
 
@@ -167,9 +168,23 @@ def render() -> None:
     else:
         st.success("No hay nada para cargar: todo lo válido del anexo ya está en GEMANET.")
 
+    if datos["devolucion"]:
+        st.download_button(
+            f"Devolver al prestador ({len(resultado.faltan_con_error)} bloqueados)",
+            data=datos["devolucion"],
+            file_name=f"{datos['nombre']}_devolucion_prestador.xlsx",
+            mime=HOJA_EXCEL,
+            key="descarga_devolucion",
+            type="primary",
+            width="stretch",
+        )
+        st.caption(
+            "CODIGO - DESCRIPCION - VALOR de lo bloqueado, con el motivo y la fila del anexo."
+        )
+
     if datos["notificacion"]:
         st.download_button(
-            "Documento para notificar al prestador (Excel)",
+            "Documento para notificar lo que se parametriza (Excel)",
             data=datos["notificacion"],
             file_name=f"{datos['nombre']}_notificacion.xlsx",
             mime=HOJA_EXCEL,

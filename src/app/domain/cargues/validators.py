@@ -8,7 +8,6 @@ marca para revisión en vez de adivinarse.
 from __future__ import annotations
 
 import re
-from collections import Counter
 from collections.abc import Iterable, Mapping
 
 from src.app.domain.cargues import parsing, rules, sanitizer
@@ -113,12 +112,29 @@ def _procesar_codigo(
                 fila=registro.fila,
                 campo="codigo",
                 severidad=Severidad.BLOQUEANTE,
-                problema=f"el código '{codigo}' no cumple el formato de {tipo_cargue}",
+                problema=_problema_de_formato(codigo, tipo_cargue),
                 valor_original=codigo,
                 regla=_texto_regla_codigo(tipo_cargue),
                 sugerencia=_sugerencia_codigo(codigo, tipo_cargue),
             )
         )
+
+    # Insumos: el patrón es amplio a propósito (los códigos son del prestador),
+    # así que además se descarta lo que claramente no es un código.
+    if tipo_cargue == rules.CARGUE_INS and re.fullmatch(patron, codigo):
+        motivo = _por_que_no_parece_codigo(codigo)
+        if motivo:
+            registro.agregar(
+                Hallazgo(
+                    fila=registro.fila,
+                    campo="codigo",
+                    severidad=Severidad.BLOQUEANTE,
+                    problema=f"el código '{_visible(codigo)}' no es un código válido: {motivo}",
+                    valor_original=codigo,
+                    regla="la columna de código debe traer un código, no texto",
+                    sugerencia="devolver al prestador para que informe el código correcto",
+                )
+            )
 
     # En CUMS el código es expediente-consecutivo. Si el anexo trae el
     # expediente en otra columna, se avisa cuando no coincide.
@@ -138,6 +154,47 @@ def _procesar_codigo(
                     sugerencia="revisar cuál de las dos columnas es la correcta",
                 )
             )
+
+
+def _visible(codigo: str) -> str:
+    """El código tal cual, pero con los saltos de línea a la vista."""
+
+    return re.sub(r"\s*[\r\n]+\s*", " / ", codigo).strip()
+
+
+def _problema_de_formato(codigo: str, tipo_cargue: str) -> str:
+    """Dice POR QUÉ el código no cumple el formato, para devolverlo al prestador."""
+
+    base = f"el código '{_visible(codigo)}' no cumple el formato de {tipo_cargue}"
+
+    if re.search(r"[\r\n]", codigo):
+        return f"{base}: tiene varios códigos en la misma celda (separados por saltos de línea)"
+    if rules.SEPARADOR in codigo:
+        return f"{base}: contiene el separador ';'"
+
+    raros = sanitizer.caracteres_no_soportados(codigo)
+    if raros:
+        detalle = ", ".join(sanitizer.describir_caracter(c) for c in raros)
+        return f"{base}: contiene caracteres que no son ASCII ({detalle})"
+
+    return base
+
+
+def _por_que_no_parece_codigo(codigo: str) -> str:
+    """Motivo por el que un código de insumo es en realidad un texto; '' si parece válido."""
+
+    limpio = codigo.strip()
+
+    if limpio.upper() in rules.CODIGOS_DE_RELLENO:
+        return "es un texto de relleno, no un código"
+    if len(limpio) > rules.LARGO_MAXIMO_CODIGO_INS:
+        return (
+            f"tiene {len(limpio)} caracteres; parece un texto o varios códigos "
+            f"juntos (el máximo habitual es {rules.LARGO_MAXIMO_CODIGO_INS})"
+        )
+    if limpio.count(" ") > rules.ESPACIOS_MAXIMOS_CODIGO_INS:
+        return "tiene demasiados espacios; parece una frase, no un código"
+    return ""
 
 
 def _sugerencia_codigo(codigo: str, tipo_cargue: str) -> str:
@@ -469,52 +526,73 @@ def _asignar_valor(
 # VALIDACIONES ENTRE REGISTROS
 # ============================================================
 
-def validar_duplicados(registros: list[Registro]) -> None:
-    """Marca los códigos repetidos.
+MAXIMO_DE_FILAS_EN_EL_MENSAJE = 8
 
-    El sistema nunca decide cuál se queda: solo avisa. Es el caso de los
-    CUPS adulto/pediátrico, que el equipo todavía no ha definido.
+
+def _filas_repetidas(grupo: list[Registro]) -> str:
+    filas = [str(r.fila) for r in grupo[:MAXIMO_DE_FILAS_EN_EL_MENSAJE]]
+    return ", ".join(filas) + ("…" if len(grupo) > MAXIMO_DE_FILAS_EN_EL_MENSAJE else "")
+
+
+def _agrupar(registros: list[Registro], clave) -> dict[str, list[Registro]]:
+    grupos: dict[str, list[Registro]] = {}
+    for registro in registros:
+        valor = clave(registro)
+        if valor:
+            grupos.setdefault(valor, []).append(registro)
+    return {v: g for v, g in grupos.items() if len(g) > 1}
+
+
+def validar_duplicados(registros: list[Registro]) -> None:
+    """Bloquea TODOS los registros de un código repetido.
+
+    GEMANET no distingue dos registros con el mismo código, y el sistema no
+    decide cuál se queda: se devuelven al prestador. Es el caso, por ejemplo,
+    de dos filas con el mismo código y valores distintos.
     """
 
-    conteo = Counter(r.codigo for r in registros if r.codigo)
-
-    for registro in registros:
-        repeticiones = conteo.get(registro.codigo, 0)
-        if repeticiones > 1:
+    for codigo, grupo in _agrupar(registros, lambda r: r.codigo.strip()).items():
+        for registro in grupo:
+            valores = sorted({str(r.valor_original) for r in grupo if r.valor_original})
             registro.agregar(
                 Hallazgo(
                     fila=registro.fila,
                     campo="codigo",
-                    severidad=Severidad.ADVERTENCIA,
+                    severidad=Severidad.BLOQUEANTE,
                     problema=(
-                        f"el código '{registro.codigo}' aparece "
-                        f"{repeticiones} veces en el anexo"
+                        f"el código '{codigo}' aparece {len(grupo)} veces en el "
+                        f"anexo (filas {_filas_repetidas(grupo)}"
+                        + (f"; valores: {', '.join(valores)}" if len(valores) > 1 else "")
+                        + ")"
                     ),
                     valor_original=registro.codigo,
                     regla="GEMANET no distingue dos registros con el mismo código",
-                    sugerencia="decidir cuál se carga o crear un código propio",
+                    sugerencia="devolver al prestador: debe quedar una sola fila por código",
                 )
             )
 
 
 def validar_descripciones_repetidas(registros: list[Registro]) -> None:
-    """Avisa cuando dos códigos distintos comparten descripción."""
+    """Bloquea los registros que comparten la misma descripción.
 
-    conteo = Counter(
-        r.descripcion for r in registros if r.descripcion
-    )
+    Dos productos distintos no deben llamarse igual: no se sabría a cuál
+    corresponde cada tarifa. Se comparan las descripciones ya saneadas.
+    """
 
-    for registro in registros:
-        if conteo.get(registro.descripcion, 0) > 1:
+    for descripcion, grupo in _agrupar(registros, lambda r: r.descripcion).items():
+        for registro in grupo:
             registro.agregar(
                 Hallazgo(
                     fila=registro.fila,
                     campo="descripcion",
-                    severidad=Severidad.ADVERTENCIA,
-                    problema="la descripción se repite en otro registro",
+                    severidad=Severidad.BLOQUEANTE,
+                    problema=(
+                        f"la descripción se repite en {len(grupo)} registros "
+                        f"(filas {_filas_repetidas(grupo)})"
+                    ),
                     valor_final=registro.descripcion,
-                    regla="descripciones iguales con códigos distintos",
-                    sugerencia="verificar si son productos diferentes",
+                    regla="no puede haber dos registros con la misma descripción",
+                    sugerencia="devolver al prestador para que los diferencie",
                 )
             )
 
