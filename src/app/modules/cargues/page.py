@@ -12,7 +12,7 @@ import polars as pl
 import streamlit as st
 
 from src.app.components.layout import render_header
-from src.app.application import cargues_service, referencias_service
+from src.app.application import cargues_service, notificacion_service, referencias_service
 from src.app.core.config import get_config
 from src.app.domain.cargues import rules, txt_writer
 from src.app.infrastructure.referencias.repositorio import ReferenciaNoDisponible
@@ -270,7 +270,21 @@ def render_descargas(resultado: ResultadoCargue) -> None:
 
     nombre = f"{resultado.tipo_cargue}_{resultado.archivo_origen.rsplit('.', 1)[0]}"
 
-    columnas = st.columns(3)
+    columnas = st.columns(4)
+
+    notificacion = notificacion_service.excel_de_notificacion(
+        notificacion_service.filas_para_parametrizar(resultado.listos),
+        notificacion_service.filas_por_corregir_de_registros(resultado.bloqueados),
+    )
+    if notificacion is not None:
+        columnas[3].download_button(
+            "Notificar al prestador",
+            data=notificacion,
+            file_name=f"{nombre}_notificacion.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            help="CODIGO - DESCRIPCION - VALOR de lo que se parametriza y lo que debe corregir el prestador.",
+            use_container_width=True,
+        )
 
     columnas[0].download_button(
         "Archivo TXT para GEMANET",

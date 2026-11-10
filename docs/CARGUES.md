@@ -162,6 +162,37 @@ Reglas de la comparación:
   (la conciliación), "valor regulado menor" y "no se encontró el
   medicamento" (Circular 022 y Listado CUM: pendientes de implementar).
 
+## Los códigos no se cambian
+
+- Ceros a la izquierda, símbolos, mayúsculas y minúsculas: el código va al
+  TXT exactamente como está en la celda. Si Excel ya lo guardó como número,
+  el cero ya se perdió antes de llegar al sistema; en servicios (CUPS) eso
+  genera un aviso, porque son los que se escriben con ceros (`053109`).
+- **Insumos:** el código se respeta completo, incluso con espacios, `/` y
+  otros símbolos. Solo se quitan los saltos de línea y tabulaciones de los
+  extremos (no caben en el archivo), y queda registrado. Un salto de línea
+  *dentro* del código lo bloquea: suele ser varios códigos pegados en una celda.
+- **Servicios y medicamentos:** los espacios de los extremos se quitan y queda
+  registrado como corrección.
+- Lo que sí se corrige es la **descripción** (tildes, caracteres especiales,
+  `;`), nunca el código.
+- Para comparar con GEMANET se ignoran los espacios de los extremos del
+  código; el código que se escribe no se modifica.
+
+## Documento para notificar al prestador
+
+`CODIGO - DESCRIPCION - VALOR`, en Excel, con los códigos como texto para que
+Excel no les quite los ceros. Disponible en:
+
+- **Conciliación GEMANET:** botón *Documento para notificar al prestador*, y el
+  archivo `_notificacion.xlsx` de la terminal.
+- **Cargues GEMANET:** botón *Notificar al prestador*, y `_notificacion.xlsx`.
+
+Hoja **Para parametrizar**: lo que se va a cargar (la descripción es la que
+queda en GEMANET, ya saneada). Hoja **Por corregir** (solo si hay): lo que el
+prestador debe corregir, con el motivo. Si no hay nada que notificar, no se
+genera.
+
 ## Cuando aparezca un caso nuevo
 
 Casi todo se ajusta en `src/app/domain/cargues/rules.py`, sin tocar lógica:

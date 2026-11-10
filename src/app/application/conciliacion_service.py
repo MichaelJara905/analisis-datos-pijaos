@@ -14,7 +14,7 @@ from collections.abc import Iterable, Mapping
 from datetime import datetime
 from pathlib import Path
 
-from src.app.application import cargues_service
+from src.app.application import cargues_service, notificacion_service
 from src.app.domain.cargues import conciliacion, txt_writer
 from src.app.domain.cargues.model import Hallazgo, Registro
 from src.app.infrastructure.excel import gemanet
@@ -67,6 +67,16 @@ def construir_txt(resultado: conciliacion.ResultadoConciliacion) -> bytes:
     """TXT con SOLO lo que falta en GEMANET y se puede cargar."""
 
     return txt_writer.construir_bytes(resultado.a_cargar, resultado.tipo_cargue)
+
+
+def construir_notificacion(resultado: conciliacion.ResultadoConciliacion) -> bytes | None:
+    """CODIGO - DESCRIPCION - VALOR de lo que se va a parametrizar, y en otra
+    hoja lo que el prestador debe corregir (con el motivo)."""
+
+    return notificacion_service.excel_de_notificacion(
+        notificacion_service.filas_para_parametrizar(resultado.a_cargar),
+        notificacion_service.filas_por_corregir_de_informe(resultado.faltan_con_error),
+    )
 
 
 def verificar_txt(
@@ -133,6 +143,11 @@ def generar_informes(
     for clave, filas in informes.items():
         if filas:
             rutas[clave] = _csv(filas, destino / f"{nombre}_{clave}.csv")
+
+    excel = construir_notificacion(resultado)
+    if excel is not None:
+        rutas["notificacion"] = destino / f"{nombre}_notificacion.xlsx"
+        rutas["notificacion"].write_bytes(excel)
 
     resumen = [
         {"concepto": clave.replace("_", " "), "cantidad": valor}

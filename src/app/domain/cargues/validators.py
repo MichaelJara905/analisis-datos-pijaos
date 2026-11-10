@@ -44,8 +44,37 @@ def _procesar_codigo(
     fila: dict[str, object],
     tipo_cargue: str,
 ) -> None:
-    codigo, aviso = parsing.codigo_de_celda(fila.get("codigo"))
+    # El código se respeta tal cual viene. En insumos ni siquiera se recortan
+    # los espacios de los extremos; en servicios y medicamentos sí (nunca los
+    # llevan) y el cambio queda registrado.
+    codigo, aviso = parsing.codigo_de_celda(
+        fila.get("codigo"),
+        conservar_espacios=tipo_cargue == rules.CARGUE_INS,
+    )
     registro.codigo = codigo
+
+    original = fila.get("codigo")
+    if codigo and isinstance(original, str) and original != codigo:
+        es_insumo = tipo_cargue == rules.CARGUE_INS
+        registro.agregar(
+            Hallazgo(
+                fila=registro.fila,
+                campo="codigo",
+                severidad=Severidad.CORRECCION,
+                problema=(
+                    "se quitaron saltos de línea o tabulaciones al inicio o al final del código"
+                    if es_insumo
+                    else "se quitaron espacios sobrantes al inicio o al final del código"
+                ),
+                valor_original=original,
+                valor_final=codigo,
+                regla=(
+                    "un salto de línea no cabe en el archivo ni es parte del código"
+                    if es_insumo
+                    else "los códigos de servicios y medicamentos no llevan espacios en los extremos"
+                ),
+            )
+        )
 
     if codigo == "":
         registro.agregar(
@@ -60,7 +89,10 @@ def _procesar_codigo(
         )
         return
 
-    if aviso:
+    # Solo en servicios: allí los CUPS llevan ceros a la izquierda (053109) y
+    # Excel los quita si la celda es numérica. Los códigos de insumos y
+    # medicamentos no se rellenan con ceros: el aviso sería ruido.
+    if aviso and tipo_cargue == rules.CARGUE_CUPS:
         registro.agregar(
             Hallazgo(
                 fila=registro.fila,
@@ -75,7 +107,7 @@ def _procesar_codigo(
         )
 
     patron = rules.PATRONES_DE_CODIGO[tipo_cargue]
-    if not re.match(patron, codigo):
+    if not re.fullmatch(patron, codigo):
         registro.agregar(
             Hallazgo(
                 fila=registro.fila,

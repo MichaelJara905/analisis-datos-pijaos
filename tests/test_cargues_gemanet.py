@@ -580,9 +580,11 @@ def test_codigo_de_insumo_que_rompe_el_archivo_se_bloquea(codigo) -> None:
     assert _ins(codigo).bloqueado
 
 
-def test_el_espacio_final_del_codigo_no_llega_al_txt() -> None:
+def test_el_codigo_de_insumo_no_se_recorta() -> None:
+    """Los códigos de insumo se respetan tal cual, incluso con espacios al final."""
+
     registro = _ins("CS-093 ")
-    assert registro.codigo == "CS-093"
+    assert registro.codigo == "CS-093 "
 
 
 @pytest.mark.parametrize(

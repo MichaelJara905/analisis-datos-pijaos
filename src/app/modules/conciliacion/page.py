@@ -84,6 +84,7 @@ def _conciliar(anexo, reporte, tipo: str, hojas: str) -> dict | None:
         "procesado": procesado,
         "reporte": gema,
         "txt": txt,
+        "notificacion": conciliacion_service.construir_notificacion(resultado),
         "nombre": prefijo,
     }
 
@@ -165,6 +166,20 @@ def render() -> None:
         st.caption("Sin los que ya están en GEMANET, sin repetidos y sin errores.")
     else:
         st.success("No hay nada para cargar: todo lo válido del anexo ya está en GEMANET.")
+
+    if datos["notificacion"]:
+        st.download_button(
+            "Documento para notificar al prestador (Excel)",
+            data=datos["notificacion"],
+            file_name=f"{datos['nombre']}_notificacion.xlsx",
+            mime=HOJA_EXCEL,
+            key="descarga_notificacion",
+            width="stretch",
+        )
+        st.caption(
+            "CODIGO - DESCRIPCION - VALOR de lo que se va a parametrizar y, en otra hoja, "
+            "lo que el prestador debe corregir, con el motivo."
+        )
 
     pestanas = st.tabs(
         ["Vista previa del TXT", "Faltan con error", "Con diferencias", "Inconsistencias", "Solo en GEMANET"]

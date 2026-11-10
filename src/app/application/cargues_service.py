@@ -19,6 +19,7 @@ from typing import BinaryIO
 
 from openpyxl import load_workbook
 
+from src.app.application import notificacion_service
 from src.app.domain.cargues import parsing, rules, txt_writer, validators
 from src.app.infrastructure.excel import anexos
 from src.app.domain.cargues.model import (
@@ -403,6 +404,14 @@ def generar_salidas(
             destino / f"{nombre}_registros.csv",
             list(detalle[0].keys()),
         )
+
+    excel = notificacion_service.excel_de_notificacion(
+        notificacion_service.filas_para_parametrizar(registros),
+        notificacion_service.filas_por_corregir_de_registros(resultado.bloqueados),
+    )
+    if excel is not None:
+        rutas["notificacion"] = destino / f"{nombre}_notificacion.xlsx"
+        rutas["notificacion"].write_bytes(excel)
 
     pendientes = candidatos_a_propio(resultado)
     if pendientes:
