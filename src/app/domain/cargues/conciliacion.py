@@ -97,13 +97,17 @@ def _porcentaje_entero(texto: str) -> int | None:
     return int(round(numero))
 
 
-def _diferencias(registro: Registro, gema: RegistroGemanet) -> list[str]:
+def _diferencias(registro: Registro, gema: RegistroGemanet, tipo_cargue: str) -> list[str]:
     motivos: list[str] = []
 
     if gema.activo.strip().upper() == "NO":
         motivos.append("está cargado pero INACTIVO en GEMANET")
 
-    if registro.es_regulado != gema.es_regulado:
+    # Los insumos siempre son tarifa propia: en el reporte de GEMANET el tipo
+    # puede venir vacío y eso NO significa regulado (a diferencia de los CUPS).
+    gema_regulado = gema.es_regulado and tipo_cargue not in rules.CARGUES_SIEMPRE_PROPIOS
+
+    if registro.es_regulado != gema_regulado:
         motivos.append(
             f"tipo distinto: anexo {registro.tipo_tarifa or 'PRO'}, "
             f"GEMANET {gema.tipo or 'regulado'}"
@@ -251,7 +255,7 @@ def conciliar(
         if repetido:
             continue  # ya está en GEMANET; el repetido quedó en inconsistencias
 
-        motivos = _diferencias(registro, gema)
+        motivos = _diferencias(registro, gema, tipo_cargue)
         if motivos:
             fila = _fila(registro, "DIFERENTE", "; ".join(motivos))
             fila["valor_gemanet"] = "" if gema.valor is None else gema.valor

@@ -153,7 +153,10 @@ def _texto_regla_codigo(tipo_cargue: str) -> str:
             "ej. 129M01) o es un propio PRO####"
         ),
         rules.CARGUE_CUMS: "el CUMS es expediente-consecutivo (ej. 20048691-1)",
-        rules.CARGUE_INS: "el código de insumo no admite espacios ni signos",
+        rules.CARGUE_INS: (
+            "el código de insumo no admite ';', saltos de línea ni "
+            "caracteres fuera de ASCII"
+        ),
     }[tipo_cargue]
 
 

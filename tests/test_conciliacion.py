@@ -357,6 +357,24 @@ def test_sin_nada_que_cargar_no_hay_txt(tmp_path) -> None:
     assert "txt" not in rutas
 
 
+def test_en_insumos_el_tipo_vacio_de_gemanet_no_es_regulado() -> None:
+    insumo = _reg("INS-1", valor=44030, tipo_tarifa="PRO")
+    sin_tipo = _gema("INS-1", valor=44030.0, tipo="")
+
+    como_insumo = conciliar([insumo], {"INS-1": sin_tipo}, rules.CARGUE_INS)
+    como_servicio = conciliar([insumo], {"INS-1": sin_tipo}, rules.CARGUE_CUPS)
+
+    assert len(como_insumo.coinciden) == 1 and not como_insumo.diferencias
+    assert "tipo distinto" in como_servicio.diferencias[0]["motivo"]
+
+
+def test_en_insumos_el_valor_distinto_si_se_reporta() -> None:
+    resultado = conciliar(
+        [_reg("INS-1", valor=50000)], {"INS-1": _gema("INS-1", valor=44030.0, tipo="")}, rules.CARGUE_INS
+    )
+    assert "valor distinto" in resultado.diferencias[0]["motivo"]
+
+
 def test_cargado_pero_inactivo_se_reporta_como_diferencia() -> None:
     resultado = conciliar(
         [_reg("111111")],

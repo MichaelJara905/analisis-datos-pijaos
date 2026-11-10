@@ -106,6 +106,17 @@ REEMPLAZOS_DE_CARACTERES = {
     "\u2014": "-",
     "\u00a0": " ",   # espacio duro
     "×": "X",
+    # Equivalentes ASCII sin ambigüedad (aparecieron en el anexo de Traumasur)
+    "Ⅰ": "I",
+    "Ⅱ": "II",
+    "Ⅲ": "III",
+    "Ⅳ": "IV",
+    "Ⅴ": "V",
+    "（": "(",
+    "）": ")",
+    "½": "1/2",
+    "¼": "1/4",
+    "¾": "3/4",
 }
 
 # La descripción NO se pasa a mayúsculas ni se le compactan los espacios
@@ -135,7 +146,11 @@ CODIGOS_TRASLADO = ("601T01", "601T02", "602T01", "602T02")
 SEPARADOR_PROPIOS = "|"
 REEMPLAZO_SEPARADOR_PROPIOS = "-"
 PATRON_CODIGO_CUMS = r"^\d+-\d+$"        # CONFIRMADO: expediente-consecutivo
-PATRON_CODIGO_INS = r"^[A-Za-z0-9._\-]+$"  # INFERIDO: libre, sin espacios
+# CONFIRMADO con lo que GEMANET ya tiene cargado: los códigos de insumo son
+# del prestador y pueden llevar '/', espacios, paréntesis y similares
+# (128-822/02, MPF-BT 50 35-S). Solo se rechaza lo que rompe el archivo: el
+# separador ';', los saltos de línea y lo que no es ASCII imprimible.
+PATRON_CODIGO_INS = r"^(?!.*;)[\x20-\x7e]+$"
 
 PATRONES_DE_CODIGO = {
     CARGUE_CUPS: PATRON_CODIGO_CUPS,

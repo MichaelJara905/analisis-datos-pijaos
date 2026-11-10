@@ -554,3 +554,46 @@ def test_traslado_propio_no_se_bloquea() -> None:
     registro = _cups("601T02", tipo_tarifa="PRO", valor=35456)
     validar_codigos_propios_y_traslados([registro])
     assert not registro.bloqueado
+
+
+# ============================================================
+# CÓDIGOS DE INSUMO DEL PRESTADOR Y CARACTERES EQUIVALENTES
+# ============================================================
+
+def _ins(codigo):
+    return construir_registro(
+        {"_fila": 5, "codigo": codigo, "descripcion": "TORNILLO", "valor": 1000},
+        rules.CARGUE_INS,
+    )
+
+
+@pytest.mark.parametrize(
+    "codigo",
+    ["128-822/02", "MPF-BT 50 35-S", "PER 11-14-S", "241.021412", "INS0020179", "107-210/41", "CS-093 "],
+)
+def test_codigos_de_insumo_del_prestador_con_barra_y_espacios_son_validos(codigo) -> None:
+    assert not _ins(codigo).bloqueado
+
+
+@pytest.mark.parametrize("codigo", ["AB;12", "107-210\n41", "CÓDIGO-1"])
+def test_codigo_de_insumo_que_rompe_el_archivo_se_bloquea(codigo) -> None:
+    assert _ins(codigo).bloqueado
+
+
+def test_el_espacio_final_del_codigo_no_llega_al_txt() -> None:
+    registro = _ins("CS-093 ")
+    assert registro.codigo == "CS-093"
+
+
+@pytest.mark.parametrize(
+    ("original", "esperado"),
+    [
+        ("PLACA TIPO Ⅱ", "PLACA TIPO II"),
+        ("TORNILLO （3.5）", "TORNILLO (3.5)"),
+        ("SUTURA ½ CIRCULO", "SUTURA 1/2 CIRCULO"),
+    ],
+)
+def test_caracteres_equivalentes_pasan_a_ascii(original, esperado) -> None:
+    saneada, cambios = sanitizer.sanear_descripcion(original)
+    assert saneada == esperado
+    assert cambios and not sanitizer.caracteres_no_soportados(saneada)
