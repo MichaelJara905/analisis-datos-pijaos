@@ -15,7 +15,10 @@ Los cuatro archivos van en una carpeta, indicada en `.streamlit/secrets.toml`
 | Listado CUM (INVIMA) | `LISTADO` y `UNICO` |
 | SuperHomologador | `SUPERHOMOLOGADOR` |
 
-Si la carpeta tiene las dos Circulares, se usa la nueva. Cada pestaña lee
+También se buscan en las subcarpetas (hasta dos niveles), así que basta con
+indicar `PUNTOS DE APOYO`. Si hay varios archivos que cumplen, se usa el más
+cercano a la carpeta indicada y, entre iguales, el modificado más
+recientemente. Si la carpeta tiene las dos Circulares, se usa la nueva. Cada pestaña lee
 solo su archivo, la primera vez que se abre. Si el archivo cambia, se vuelve
 a leer solo; el botón **Actualizar** fuerza la lectura. Los originales no se
 modifican.

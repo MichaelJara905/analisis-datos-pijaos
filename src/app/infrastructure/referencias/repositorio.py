@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -89,23 +90,47 @@ def descubrir_fuentes(carpeta: str | Path) -> Fuentes:
         raise ReferenciaNoDisponible(f"No existe la carpeta '{ruta}'.")
 
     archivos = [
-        (archivo, normalizar_encabezado(archivo.stem))
-        for archivo in sorted(ruta.glob("*.xls*"))
-        if not archivo.name.startswith("~$")
+        (archivo, normalizar_encabezado(archivo.stem), profundidad)
+        for archivo, profundidad in _libros_de(ruta)
     ]
     encontrados: dict[str, Path] = {}
 
     for clave, alternativas in PATRONES_DE_ARCHIVO.items():
         for patrones in alternativas:
-            hallado = next(
-                (a for a, nombre in archivos if all(p in nombre for p in patrones)),
-                None,
-            )
-            if hallado is not None:
-                encontrados[clave] = hallado
+            candidatos = [
+                (profundidad, -archivo.stat().st_mtime, archivo.name, archivo)
+                for archivo, nombre, profundidad in archivos
+                if all(p in nombre for p in patrones)
+            ]
+            if candidatos:
+                # El más cercano a la carpeta indicada y, entre iguales, el
+                # modificado más recientemente.
+                encontrados[clave] = min(candidatos)[3]
                 break
 
     return Fuentes(carpeta=ruta, **encontrados)
+
+
+PROFUNDIDAD_MAXIMA = 2
+
+
+def _libros_de(raiz: Path) -> list[tuple[Path, int]]:
+    """Libros de Excel de la carpeta y de sus subcarpetas (hasta 2 niveles)."""
+
+    libros: list[tuple[Path, int]] = []
+    base = len(raiz.parts)
+
+    for actual, carpetas, nombres in os.walk(raiz):
+        profundidad = len(Path(actual).parts) - base
+        carpetas[:] = [
+            c for c in carpetas
+            if not c.startswith(".") and profundidad < PROFUNDIDAD_MAXIMA
+        ]
+        for nombre in nombres:
+            if nombre.lower().endswith((".xlsx", ".xlsm", ".xls")) and not nombre.startswith("~$"):
+                libros.append((Path(actual) / nombre, profundidad))
+
+    return libros
 
 
 # ============================================================

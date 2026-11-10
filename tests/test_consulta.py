@@ -209,6 +209,42 @@ def test_prefiere_la_circular_nueva_sobre_la_anterior(carpeta) -> None:
     assert fuentes.circular.name == "Precios por unidad Circular 022_2026.xlsx"
 
 
+def test_encuentra_los_documentos_en_subcarpetas(tmp_path) -> None:
+    for subcarpeta, crear in (
+        ("CIRCULARES", _circular_nueva),
+        ("MEDICAMENTOS", _listado),
+        ("CUPS 2026", _trazabilidad),
+    ):
+        destino = tmp_path / subcarpeta
+        destino.mkdir()
+        crear(destino)
+    _superhomologador(tmp_path)
+
+    fuentes = repositorio.descubrir_fuentes(tmp_path)
+
+    assert fuentes.circular.parent.name == "CIRCULARES"
+    assert fuentes.listado_cum.parent.name == "MEDICAMENTOS"
+    assert fuentes.trazabilidad.parent.name == "CUPS 2026"
+    assert fuentes.superhomologador.parent == tmp_path
+
+
+def test_prefiere_el_archivo_mas_cercano_a_la_carpeta(tmp_path) -> None:
+    viejo = tmp_path / "copias"
+    viejo.mkdir()
+    _listado(viejo)
+    _listado(tmp_path)
+
+    assert repositorio.descubrir_fuentes(tmp_path).listado_cum.parent == tmp_path
+
+
+def test_no_entra_a_las_carpetas_ocultas_ni_a_la_cache(tmp_path) -> None:
+    oculta = tmp_path / ".cache_referencias"
+    oculta.mkdir()
+    _listado(oculta)
+
+    assert repositorio.descubrir_fuentes(tmp_path).listado_cum is None
+
+
 def test_estado_de_fuentes_informa_lo_que_falta(tmp_path) -> None:
     _listado(tmp_path)
 
