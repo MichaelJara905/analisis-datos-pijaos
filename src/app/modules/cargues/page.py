@@ -12,8 +12,10 @@ import polars as pl
 import streamlit as st
 
 from src.app.components.layout import render_header
-from src.app.application import cargues_service
+from src.app.application import cargues_service, notificacion_service, referencias_service
+from src.app.core.config import get_config
 from src.app.domain.cargues import rules, txt_writer
+from src.app.infrastructure.referencias.repositorio import ReferenciaNoDisponible
 from src.app.domain.cargues.model import ResultadoCargue, Severidad
 from src.app.infrastructure.excel.anexos import LecturaFallida
 from src.app.infrastructure.excel.workbook import create_excel_download
@@ -43,6 +45,18 @@ def _excel(filas: list[dict[str, object]], hoja: str) -> bytes:
     return create_excel_download(_tabla(filas), hoja)
 
 
+@st.cache_resource(show_spinner=False)
+def _soat_por_cups() -> dict[str, frozenset[str]] | None:
+    """Homologador CUPS -> SOAT; None si no hay carpeta de referencias."""
+
+    try:
+        return referencias_service.cargar_soat_por_cups(
+            get_config().referencias_path
+        )
+    except (ReferenciaNoDisponible, OSError, ValueError, KeyError):
+        return None
+
+
 @st.cache_data(show_spinner=False)
 def cached_procesar_anexo(
     datos: bytes,
@@ -50,6 +64,7 @@ def cached_procesar_anexo(
     tipo: str,
     hoja: str | None,
     fila_encabezado: int | None,
+    _soat_por_cups: dict[str, frozenset[str]] | None = None,
 ) -> ResultadoCargue:
     """Cachea el análisis para no releer el Excel en cada rerun."""
 
@@ -59,6 +74,7 @@ def cached_procesar_anexo(
         nombre_archivo=nombre,
         hoja=hoja,
         fila_encabezado=fila_encabezado,
+        soat_por_cups=_soat_por_cups,
     )
 
 
@@ -80,6 +96,11 @@ def render_carga() -> None:
         "Prepara un anexo tarifario para el cargue masivo: revisa los datos, "
         "corrige lo que se puede corregir con seguridad, señala lo que hay "
         "que revisar y genera el archivo TXT."
+    )
+    st.info(
+        "¿El prestador ya tiene códigos cargados en GEMANET? Usa **Conciliación "
+        "GEMANET** con el reporte de su tarifario: hace este mismo análisis, "
+        "descarta lo que ya está cargado y deja el TXT solo con lo que falta."
     )
 
     archivo = st.file_uploader(
@@ -138,6 +159,7 @@ def _analizar(archivo, tipo: str, hoja: str, fila_encabezado: int) -> None:
                 tipo,
                 hoja or None,
                 fila_encabezado or None,
+                _soat_por_cups() if tipo == rules.CARGUE_CUPS else None,
             )
     except LecturaFallida as error:
         st.session_state.pop("cargue_resultado", None)
@@ -244,14 +266,58 @@ def render_detalle(resultado: ResultadoCargue) -> None:
             st.code(vista, language="text")
 
 
+def render_devolucion(resultado: ResultadoCargue, nombre: str) -> None:
+    """Documento con lo bloqueado, para devolverlo al prestador."""
+
+    por_corregir = notificacion_service.filas_por_corregir_de_registros(
+        resultado.bloqueados, resultado.hoja
+    )
+    hoja_excel = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+    st.markdown("**Para el prestador**")
+    columnas = st.columns(2)
+
+    devolucion = notificacion_service.excel_de_devolucion(por_corregir)
+    if devolucion is not None:
+        columnas[0].download_button(
+            f"Devolver al prestador ({len(por_corregir)} bloqueados)",
+            data=devolucion,
+            file_name=f"{nombre}_devolucion_prestador.xlsx",
+            mime=hoja_excel,
+            help=(
+                "CODIGO - DESCRIPCION - VALOR de lo bloqueado (repetidos, códigos "
+                "inválidos...), con el motivo y la fila del anexo."
+            ),
+            type="primary",
+            use_container_width=True,
+        )
+    else:
+        columnas[0].success("No hay nada que devolver al prestador.")
+
+    notificacion = notificacion_service.excel_de_notificacion(
+        notificacion_service.filas_para_parametrizar(resultado.listos),
+        por_corregir,
+    )
+    if notificacion is not None:
+        columnas[1].download_button(
+            "Notificar lo que se parametriza",
+            data=notificacion,
+            file_name=f"{nombre}_notificacion.xlsx",
+            mime=hoja_excel,
+            help="CODIGO - DESCRIPCION - VALOR de lo que se carga y, en otra hoja, lo que debe corregir.",
+            use_container_width=True,
+        )
+
+
 def render_descargas(resultado: ResultadoCargue) -> None:
     st.subheader("Descargas")
 
+    nombre = f"{resultado.tipo_cargue}_{resultado.archivo_origen.rsplit('.', 1)[0]}"
+
     if not resultado.listos:
         st.error("No se genera TXT porque ningún registro quedó listo.")
+        render_devolucion(resultado, nombre)
         return
-
-    nombre = f"{resultado.tipo_cargue}_{resultado.archivo_origen.rsplit('.', 1)[0]}"
 
     columnas = st.columns(3)
 
@@ -283,6 +349,8 @@ def render_descargas(resultado: ResultadoCargue) -> None:
         mime=hoja_excel,
         use_container_width=True,
     )
+
+    render_devolucion(resultado, nombre)
 
     st.caption(
         "El TXT incluye únicamente los registros listos. Los bloqueados "

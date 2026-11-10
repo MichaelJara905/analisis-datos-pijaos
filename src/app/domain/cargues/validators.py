@@ -8,7 +8,7 @@ marca para revisión en vez de adivinarse.
 from __future__ import annotations
 
 import re
-from collections import Counter
+from collections.abc import Iterable, Mapping
 
 from src.app.domain.cargues import parsing, rules, sanitizer
 from src.app.domain.cargues.model import Hallazgo, Registro, Severidad
@@ -43,8 +43,37 @@ def _procesar_codigo(
     fila: dict[str, object],
     tipo_cargue: str,
 ) -> None:
-    codigo, aviso = parsing.codigo_de_celda(fila.get("codigo"))
+    # El código se respeta tal cual viene. En insumos ni siquiera se recortan
+    # los espacios de los extremos; en servicios y medicamentos sí (nunca los
+    # llevan) y el cambio queda registrado.
+    codigo, aviso = parsing.codigo_de_celda(
+        fila.get("codigo"),
+        conservar_espacios=tipo_cargue == rules.CARGUE_INS,
+    )
     registro.codigo = codigo
+
+    original = fila.get("codigo")
+    if codigo and isinstance(original, str) and original != codigo:
+        es_insumo = tipo_cargue == rules.CARGUE_INS
+        registro.agregar(
+            Hallazgo(
+                fila=registro.fila,
+                campo="codigo",
+                severidad=Severidad.CORRECCION,
+                problema=(
+                    "se quitaron saltos de línea o tabulaciones al inicio o al final del código"
+                    if es_insumo
+                    else "se quitaron espacios sobrantes al inicio o al final del código"
+                ),
+                valor_original=original,
+                valor_final=codigo,
+                regla=(
+                    "un salto de línea no cabe en el archivo ni es parte del código"
+                    if es_insumo
+                    else "los códigos de servicios y medicamentos no llevan espacios en los extremos"
+                ),
+            )
+        )
 
     if codigo == "":
         registro.agregar(
@@ -59,7 +88,10 @@ def _procesar_codigo(
         )
         return
 
-    if aviso:
+    # Solo en servicios: allí los CUPS llevan ceros a la izquierda (053109) y
+    # Excel los quita si la celda es numérica. Los códigos de insumos y
+    # medicamentos no se rellenan con ceros: el aviso sería ruido.
+    if aviso and tipo_cargue == rules.CARGUE_CUPS:
         registro.agregar(
             Hallazgo(
                 fila=registro.fila,
@@ -74,18 +106,35 @@ def _procesar_codigo(
         )
 
     patron = rules.PATRONES_DE_CODIGO[tipo_cargue]
-    if not re.match(patron, codigo):
+    if not re.fullmatch(patron, codigo):
         registro.agregar(
             Hallazgo(
                 fila=registro.fila,
                 campo="codigo",
                 severidad=Severidad.BLOQUEANTE,
-                problema=f"el código '{codigo}' no cumple el formato de {tipo_cargue}",
+                problema=_problema_de_formato(codigo, tipo_cargue),
                 valor_original=codigo,
                 regla=_texto_regla_codigo(tipo_cargue),
-                sugerencia="corregir el código o confirmar que es un código propio",
+                sugerencia=_sugerencia_codigo(codigo, tipo_cargue),
             )
         )
+
+    # Insumos: el patrón es amplio a propósito (los códigos son del prestador),
+    # así que además se descarta lo que claramente no es un código.
+    if tipo_cargue == rules.CARGUE_INS and re.fullmatch(patron, codigo):
+        motivo = _por_que_no_parece_codigo(codigo)
+        if motivo:
+            registro.agregar(
+                Hallazgo(
+                    fila=registro.fila,
+                    campo="codigo",
+                    severidad=Severidad.BLOQUEANTE,
+                    problema=f"el código '{_visible(codigo)}' no es un código válido: {motivo}",
+                    valor_original=codigo,
+                    regla="la columna de código debe traer un código, no texto",
+                    sugerencia="devolver al prestador para que informe el código correcto",
+                )
+            )
 
     # En CUMS el código es expediente-consecutivo. Si el anexo trae el
     # expediente en otra columna, se avisa cuando no coincide.
@@ -107,11 +156,96 @@ def _procesar_codigo(
             )
 
 
+def _visible(codigo: str) -> str:
+    """El código tal cual, pero con los saltos de línea a la vista."""
+
+    return re.sub(r"\s*[\r\n]+\s*", " / ", codigo).strip()
+
+
+def _problema_de_formato(codigo: str, tipo_cargue: str) -> str:
+    """Dice POR QUÉ el código no cumple el formato, para devolverlo al prestador."""
+
+    base = f"el código '{_visible(codigo)}' no cumple el formato de {tipo_cargue}"
+
+    if re.search(r"[\r\n]", codigo):
+        return f"{base}: tiene varios códigos en la misma celda (separados por saltos de línea)"
+    if rules.SEPARADOR in codigo:
+        return f"{base}: contiene el separador ';'"
+
+    raros = sanitizer.caracteres_no_soportados(codigo)
+    if raros:
+        detalle = ", ".join(sanitizer.describir_caracter(c) for c in raros)
+        return f"{base}: contiene caracteres que no son ASCII ({detalle})"
+
+    return base
+
+
+def _por_que_no_parece_codigo(codigo: str) -> str:
+    """Motivo por el que un código de insumo es en realidad un texto; '' si parece válido."""
+
+    limpio = codigo.strip()
+
+    if limpio.upper() in rules.CODIGOS_DE_RELLENO:
+        return "es un texto de relleno, no un código"
+    if len(limpio) > rules.LARGO_MAXIMO_CODIGO_INS:
+        return (
+            f"tiene {len(limpio)} caracteres; parece un texto o varios códigos "
+            f"juntos (el máximo habitual es {rules.LARGO_MAXIMO_CODIGO_INS})"
+        )
+    if limpio.count(" ") > rules.ESPACIOS_MAXIMOS_CODIGO_INS:
+        return "tiene demasiados espacios; parece una frase, no un código"
+    return ""
+
+
+def _sugerencia_codigo(codigo: str, tipo_cargue: str) -> str:
+    base = "corregir el código o confirmar que es un código propio"
+    if tipo_cargue == rules.CARGUE_CUPS and re.fullmatch(r"\d{5}", codigo):
+        return (
+            f"{base}; si es un CUPS al que Excel le quitó el cero inicial, "
+            f"sería '0{codigo}' (verificar en el homologador)"
+        )
+    return base
+
+
+def validar_codigos_propios_y_traslados(registros: list[Registro]) -> None:
+    """Los traslados y los propios (PRO####) nunca se cargan como regulados."""
+
+    for registro in registros:
+        es_propio = re.match(rules.PATRON_CODIGO_PROPIO, registro.codigo)
+        es_traslado = registro.codigo in rules.CODIGOS_TRASLADO
+        if not (es_propio or es_traslado) or not registro.es_regulado:
+            continue
+
+        registro.agregar(
+            Hallazgo(
+                fila=registro.fila,
+                campo="tipo_tarifa",
+                severidad=Severidad.BLOQUEANTE,
+                problema=(
+                    f"el código '{registro.codigo}' se marcó como "
+                    f"{registro.tipo_tarifa}"
+                ),
+                valor_original=registro.tipo_tarifa,
+                regla=(
+                    "los propios y los traslados nunca llevan SOAT: "
+                    "se cargan como PRO"
+                ),
+                sugerencia="cambiar el tipo a PRO y definir el valor",
+            )
+        )
+
+
 def _texto_regla_codigo(tipo_cargue: str) -> str:
     return {
-        rules.CARGUE_CUPS: "el CUPS siempre tiene 6 dígitos",
+        rules.CARGUE_CUPS: (
+            "el CUPS tiene 6 caracteres (dígitos o letras mayúsculas, "
+            "ej. 129M01) o es un propio PRO####"
+        ),
         rules.CARGUE_CUMS: "el CUMS es expediente-consecutivo (ej. 20048691-1)",
-        rules.CARGUE_INS: "el código de insumo no admite espacios ni signos",
+        rules.CARGUE_INS: (
+            "el código de insumo no admite ';', saltos de línea ni "
+            "caracteres fuera de ASCII"
+        ),
     }[tipo_cargue]
 
 
@@ -392,51 +526,150 @@ def _asignar_valor(
 # VALIDACIONES ENTRE REGISTROS
 # ============================================================
 
-def validar_duplicados(registros: list[Registro]) -> None:
-    """Marca los códigos repetidos.
+MAXIMO_DE_FILAS_EN_EL_MENSAJE = 8
 
-    El sistema nunca decide cuál se queda: solo avisa. Es el caso de los
-    CUPS adulto/pediátrico, que el equipo todavía no ha definido.
+
+def _filas_repetidas(grupo: list[Registro]) -> str:
+    filas = [str(r.fila) for r in grupo[:MAXIMO_DE_FILAS_EN_EL_MENSAJE]]
+    return ", ".join(filas) + ("…" if len(grupo) > MAXIMO_DE_FILAS_EN_EL_MENSAJE else "")
+
+
+def _agrupar(registros: list[Registro], clave) -> dict[str, list[Registro]]:
+    grupos: dict[str, list[Registro]] = {}
+    for registro in registros:
+        valor = clave(registro)
+        if valor:
+            grupos.setdefault(valor, []).append(registro)
+    return {v: g for v, g in grupos.items() if len(g) > 1}
+
+
+def validar_duplicados(registros: list[Registro]) -> None:
+    """Bloquea TODOS los registros de un código repetido.
+
+    GEMANET no distingue dos registros con el mismo código, y el sistema no
+    decide cuál se queda: se devuelven al prestador. Es el caso, por ejemplo,
+    de dos filas con el mismo código y valores distintos.
     """
 
-    conteo = Counter(r.codigo for r in registros if r.codigo)
-
-    for registro in registros:
-        repeticiones = conteo.get(registro.codigo, 0)
-        if repeticiones > 1:
+    for codigo, grupo in _agrupar(registros, lambda r: r.codigo.strip()).items():
+        for registro in grupo:
+            valores = sorted({str(r.valor_original) for r in grupo if r.valor_original})
             registro.agregar(
                 Hallazgo(
                     fila=registro.fila,
                     campo="codigo",
-                    severidad=Severidad.ADVERTENCIA,
+                    severidad=Severidad.BLOQUEANTE,
                     problema=(
-                        f"el código '{registro.codigo}' aparece "
-                        f"{repeticiones} veces en el anexo"
+                        f"el código '{codigo}' aparece {len(grupo)} veces en el "
+                        f"anexo (filas {_filas_repetidas(grupo)}"
+                        + (f"; valores: {', '.join(valores)}" if len(valores) > 1 else "")
+                        + ")"
                     ),
                     valor_original=registro.codigo,
                     regla="GEMANET no distingue dos registros con el mismo código",
-                    sugerencia="decidir cuál se carga o crear un código propio",
+                    sugerencia="devolver al prestador: debe quedar una sola fila por código",
                 )
             )
 
 
 def validar_descripciones_repetidas(registros: list[Registro]) -> None:
-    """Avisa cuando dos códigos distintos comparten descripción."""
+    """Bloquea los registros que comparten la misma descripción.
 
-    conteo = Counter(
-        r.descripcion for r in registros if r.descripcion
-    )
+    Dos productos distintos no deben llamarse igual: no se sabría a cuál
+    corresponde cada tarifa. Se comparan las descripciones ya saneadas.
+    """
 
-    for registro in registros:
-        if conteo.get(registro.descripcion, 0) > 1:
+    for descripcion, grupo in _agrupar(registros, lambda r: r.descripcion).items():
+        for registro in grupo:
             registro.agregar(
                 Hallazgo(
                     fila=registro.fila,
                     campo="descripcion",
-                    severidad=Severidad.ADVERTENCIA,
-                    problema="la descripción se repite en otro registro",
+                    severidad=Severidad.BLOQUEANTE,
+                    problema=(
+                        f"la descripción se repite en {len(grupo)} registros "
+                        f"(filas {_filas_repetidas(grupo)})"
+                    ),
                     valor_final=registro.descripcion,
-                    regla="descripciones iguales con códigos distintos",
-                    sugerencia="verificar si son productos diferentes",
+                    regla="no puede haber dos registros con la misma descripción",
+                    sugerencia="devolver al prestador para que los diferencie",
                 )
             )
+
+
+def _sin_ceros(texto: str) -> str:
+    return texto.strip().lstrip("0")
+
+
+def validar_contra_homologador(
+    registros: list[Registro],
+    soat_por_cups: Mapping[str, Iterable[str]],
+) -> int:
+    """Cruza cada CUPS con los códigos SOAT que el homologador le asigna.
+
+    - Tarifa propia cuyo valor es un SOAT homologado a ese CUPS: es el error
+      de cargar el código ley como si fuera el valor. GEMANET lo acepta sin
+      avisar, así que se bloquea aquí.
+    - Tarifa regulada cuyo código ley no es uno de los homologados: el
+      homólogo debe ser igual al del homologador.
+
+    Un CUPS puede tener varios SOAT; basta con que coincida con uno.
+    Los CUPS que el homologador no conoce no se marcan.
+
+    Returns:
+        Cantidad de registros cuyo CUPS no está en el homologador.
+    """
+
+    sin_cruce = 0
+
+    for registro in registros:
+        homologados = soat_por_cups.get(registro.codigo)
+        if not homologados:
+            if registro.codigo:
+                sin_cruce += 1
+            continue
+
+        normalizados = {_sin_ceros(str(s)) for s in homologados}
+        lista = ", ".join(sorted(str(s) for s in homologados))
+
+        if not registro.es_regulado:
+            if registro.valor is not None and _sin_ceros(str(registro.valor)) in normalizados:
+                registro.agregar(
+                    Hallazgo(
+                        fila=registro.fila,
+                        campo="valor",
+                        severidad=Severidad.BLOQUEANTE,
+                        problema=(
+                            f"el valor {registro.valor} es un código SOAT "
+                            f"homologado al CUPS {registro.codigo}"
+                        ),
+                        valor_original=str(registro.valor),
+                        regla=(
+                            "en tarifa PRO el campo 2 es el valor; un código "
+                            "SOAT va con UVB, UVT o UVR"
+                        ),
+                        sugerencia=(
+                            "si es regulado, indicar el manual; si es propio, "
+                            "corregir el valor"
+                        ),
+                    )
+                )
+            continue
+
+        if registro.codigo_ley and _sin_ceros(registro.codigo_ley) not in normalizados:
+            registro.agregar(
+                Hallazgo(
+                    fila=registro.fila,
+                    campo="codigo_ley",
+                    severidad=Severidad.BLOQUEANTE,
+                    problema=(
+                        f"el código ley '{registro.codigo_ley}' no es un "
+                        f"homologado del CUPS {registro.codigo}"
+                    ),
+                    valor_original=registro.codigo_ley,
+                    regla="el homólogo debe ser igual al del SUPERHOMOLOGADOR",
+                    sugerencia=f"homologados para este CUPS: {lista}",
+                )
+            )
+
+    return sin_cruce

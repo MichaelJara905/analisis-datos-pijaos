@@ -44,7 +44,7 @@ CUPS         codigo;valor_o_codigo_ley;tipo;porcentaje;norma;
 
 - Tildes y Ñ
 - `N°` → `NRO`; `°` suelto → ` GRADOS`
-- `Ø ø` → `D` · `º ª` → `O` `A` · `® ™` → `(R)` `(TM)` · `Ф` → se elimina
+- `Ø ø` → `D` · `º ª` → `O` `A` · `® ™` → `(R)` `(TM)` · `Ф Φ φ` → se eliminan · `₂` → `2` · `Ω` → `OMEGA`
 - `;` → `,`
 - Valor redondeado al peso, al estilo de Excel (0,5 sube)
 - Porcentaje de fracción a entero: `-0,1` → `-10`
@@ -54,17 +54,165 @@ CUPS         codigo;valor_o_codigo_ley;tipo;porcentaje;norma;
 - Código vacío o con formato inválido
 - Descripción vacía
 - Sin tarifa numérica, incluido "BAJO COTIZACION"
+- **Código repetido**: se bloquean TODAS las filas de ese código (el sistema
+  no decide cuál queda); el motivo dice en qué filas está y con qué valores
+- **Descripción repetida** en dos o más registros (ya saneada)
+- **Código de insumo que no es un código**: texto de relleno (`N/A`, `SIN
+  CODIGO`...), más de 25 caracteres, más de 2 espacios, varios códigos en la
+  misma celda (separados por saltos de línea), `;` o caracteres no ASCII
+  (incluido el espacio duro). El motivo dice cuál de esas es
 - Insumo marcado como tarifa regulada
 - Tarifa regulada sin código ley o con código ley mal formado
+- Traslado o propio (`PRO####`) marcado como regulado
+- Con homologador: `PRO` con un SOAT como valor, o código ley no homologado
 - Tipo de tarifa "SOAT" sin precisar UVB, UVR o UVT
 - Caracteres sin regla de reemplazo
 
 **Avisa, pero genera**
 
-- Códigos duplicados, como los CUPS adulto/pediátrico
-- Descripciones repetidas con códigos distintos
 - Código leído como número, donde Excel pudo perder ceros a la izquierda
 - Tarifa propia con porcentaje distinto de cero
+
+## Validación de CUPS contra el homologador
+
+Con `--referencias CARPETA` (CLI) o `REFERENCIAS_PATH` (pantalla), el
+cargue CUPS se cruza con la hoja HOMOLOGADOR del SUPERHOMOLOGADOR:
+
+| Caso | Resultado |
+|---|---|
+| Tarifa `PRO` cuyo valor es un SOAT homologado a ese CUPS | **Bloquea** (es el código ley cargado como valor) |
+| Tarifa regulada con un código ley que no es homologado de ese CUPS | **Bloquea** (el homólogo debe ser igual; basta con uno de los varios que tenga) |
+| CUPS que el homologador no conoce | No se marca; el reporte dice cuántos no se pudieron cruzar |
+| Sin carpeta de referencias | Hallazgo general: "no se validó contra el homologador" |
+
+Límite conocido: un `PRO` con un valor que *parece* SOAT pero corresponde a
+otro código no se detecta; solo se compara contra los SOAT de ese CUPS.
+
+## Códigos CUPS, propios y traslados
+
+- CUPS: 6 caracteres `[0-9A-Z]` (casi siempre dígitos; a veces letras,
+  como `129M01` o `601T02`) o un propio `PRO####`.
+- Los **traslados** (`601T01`, `601T02`, `602T01`, `602T02`) y los
+  **propios** nunca llevan SOAT: con `UVB`, `UVT` o `UVR` el registro se bloquea.
+- Un CUPS de 5 dígitos se bloquea y el mensaje sugiere el cero inicial
+  perdido por Excel; nunca se corrige solo.
+- `_propios_pendientes.csv` junta los registros cuyo anexo dice "crear
+  propio" y los traslados. **El sistema no crea nada**: solo los separa.
+
+## Creación de propios
+
+```bash
+python -m src.app.application.cli_propios propios.xlsx --ultimo-pro PRO5715 --salida salidas/
+```
+
+`propios.xlsx` (o `.csv`) trae NOMBRE, VALOR y CUPS. Genera, juntos:
+
+| Archivo | Contenido |
+|---|---|
+| `_creacion.txt` | `nombre\|PRO####\|valor\|CUPS` |
+| `_carga_cups.txt` | `PRO####;valor;PRO;0;0;` (se carga como un CUPS normal) |
+| `_asignacion.csv` | código que recibió cada solicitud y su estado |
+| `_hallazgos.csv` | correcciones, advertencias y bloqueos |
+
+- El consecutivo sigue el orden (después de `PRO5715`, `PRO5716`). Las
+  solicitudes bloqueadas no consumen número.
+- El último PRO usado hay que indicarlo: Máximos y Mínimos llega solo a
+  PRO4899 (2024). La salida imprime el último código asignado.
+- El nombre pasa por el mismo saneador (tildes y Ñ a letras normales,
+  ASCII); `|` se reemplaza por `-` y queda registrado como corrección.
+- Los archivos no terminan en salto de línea.
+- Opcional: `--referencias CARPETA` avisa si el CUPS no está en el homologador.
+
+## Flujo completo para dejar un anexo listo
+
+1. Exporta de GEMANET el reporte del tarifario del prestador (del tipo que
+   vas a cargar: insumos, servicios o medicamentos).
+2. **Conciliación GEMANET**: sube el anexo y ese reporte.
+3. Descarga **Devolver al prestador** (lo bloqueado) y el **TXT** (solo lo que
+   falta en GEMANET y es válido) y súbelo a GEMANET.
+4. Cuando el prestador responda, vuelve a subir el anexo corregido.
+
+Si el prestador no tiene nada cargado todavía, **Cargues GEMANET** hace el
+mismo análisis sin el cruce.
+
+## Conciliación con GEMANET
+
+Compara UN anexo (un prestador, un contrato) con el reporte exportado de
+GEMANET del mismo tipo. Descarta lo que ya está cargado y arma el TXT solo
+con lo que falta y es válido, en vez de subir todo y recibir "ya existe en
+este tarifario" o de eliminar los registros con error y dejar huecos.
+
+En la aplicación: menú **Conciliación GEMANET** (sube el anexo y el
+reporte, descarga el TXT y los informes en Excel). Desde la terminal:
+
+```bash
+python -m src.app.application.cli_conciliar anexo.xlsx --tipo CUPS \
+    --gemanet GEMA_CUPS.xlsx --referencias CARPETA_REFS --salida salidas/
+```
+
+`--tipo` es `CUPS`, `CUMS` o `INS`; `--gemanet` es el reporte de ese tipo.
+Procesa todas las hojas del anexo que corresponden al tipo (el resultado
+dice cuáles usó y cuáles omitió; `--hojas "A,B"` para forzarlas). Con
+`--solo-informes` no se escribe el TXT. Genera:
+
+| Archivo | Contenido |
+|---|---|
+| `_para_cargar.txt` | **El que se sube**: solo lo que falta en GEMANET y es válido. Antes de escribirlo se verifica leyéndolo: ninguna línea repite un código ni trae uno que ya esté en GEMANET; si falla, no se escribe |
+| `_faltantes.csv` | Lo que no está en GEMANET: `LISTO PARA CARGAR` (con la línea que tendría) o `CON ERROR` (con el motivo) |
+| `_diferencias.csv` | Cargado con otro valor, tipo, manual o porcentaje |
+| `_solo_en_gemanet.csv` | Está en GEMANET y el anexo no lo trae |
+| `_inconsistencias.csv` | **Aparte**: códigos repetidos en el anexo (con valores, códigos internos y ubicación) y anomalías del reporte de GEMANET |
+| `_resumen.csv` | Conteos y hojas usadas |
+
+Reglas de la comparación:
+
+- La clave es el código. Los CUPS del reporte vienen como número
+  (`898015.0`): se normalizan y se completan a 6 dígitos.
+- Un código repetido en el anexo **no se decide**: va a inconsistencias y,
+  si no está en GEMANET, a faltantes con error.
+- Tarifa propia contra propia: se compara el valor. Regulada contra
+  regulada: el valor lo calcula GEMANET desde el manual, así que se
+  comparan el manual y el porcentaje. Un tipo de tarifario vacío en el
+  reporte significa regulado.
+- Cada tipo de error de GEMANET tiene su validación previa: "no se
+  encontró el CUPS" (formato y homologador), "ya existe en este tarifario"
+  (la conciliación), "valor regulado menor" y "no se encontró el
+  medicamento" (Circular 022 y Listado CUM: pendientes de implementar).
+
+## Los códigos no se cambian
+
+- Ceros a la izquierda, símbolos, mayúsculas y minúsculas: el código va al
+  TXT exactamente como está en la celda. Si Excel ya lo guardó como número,
+  el cero ya se perdió antes de llegar al sistema; en servicios (CUPS) eso
+  genera un aviso, porque son los que se escriben con ceros (`053109`).
+- **Insumos:** el código se respeta completo, incluso con espacios, `/` y
+  otros símbolos. Solo se quitan los saltos de línea y tabulaciones de los
+  extremos (no caben en el archivo), y queda registrado. Un salto de línea
+  *dentro* del código lo bloquea: suele ser varios códigos pegados en una celda.
+- **Servicios y medicamentos:** los espacios de los extremos se quitan y queda
+  registrado como corrección.
+- Lo que sí se corrige es la **descripción** (tildes, caracteres especiales,
+  `;`), nunca el código.
+- Para comparar con GEMANET se ignoran los espacios de los extremos del
+  código; el código que se escribe no se modifica.
+
+## Documentos para el prestador
+
+Excel con `CODIGO | DESCRIPCION | VALOR`, con los códigos como texto para que
+Excel no les quite los ceros. Hay dos:
+
+**Devolución** (`_devolucion_prestador.xlsx`): SOLO lo bloqueado (repetidos,
+códigos que no son códigos, etc.), ordenado por código para que las filas
+repetidas queden juntas. Además de las tres columnas trae `MOTIVO` (qué está
+mal y, en los repetidos, en qué filas y con qué valores) y `UBICACION` (hoja y
+fila del anexo). Si no hay nada bloqueado, no se genera.
+
+- Cargues GEMANET: botón *Devolver al prestador*.
+- Conciliación GEMANET: botón *Devolver al prestador*.
+
+**Notificación** (`_notificacion.xlsx`): hoja *Para parametrizar* con lo que se
+va a cargar (la descripción es la que queda en GEMANET, ya saneada) y, si hay,
+hoja *Por corregir* con lo bloqueado.
 
 ## Cuando aparezca un caso nuevo
 

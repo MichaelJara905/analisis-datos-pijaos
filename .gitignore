@@ -17,6 +17,9 @@ __pycache__/
 .env
 .env.*
 
+.cache_referencias/
+salidas/
+
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

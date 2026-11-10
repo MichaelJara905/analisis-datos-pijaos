@@ -10,11 +10,17 @@ escribe en una carpeta de salida aparte, con fecha y hora en el nombre.
 from __future__ import annotations
 
 import csv
+import re
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO
 
-from src.app.domain.cargues import rules, txt_writer, validators
+from openpyxl import load_workbook
+
+from src.app.application import notificacion_service
+from src.app.domain.cargues import parsing, rules, txt_writer, validators
 from src.app.infrastructure.excel import anexos
 from src.app.domain.cargues.model import (
     Hallazgo,
@@ -36,6 +42,7 @@ def procesar_anexo(
     hoja: str | None = None,
     fila_encabezado: int | None = None,
     mapeo_manual: dict[str, str] | None = None,
+    soat_por_cups: Mapping[str, Iterable[str]] | None = None,
 ) -> ResultadoCargue:
     """Lee un anexo y devuelve el resultado completo del análisis.
 
@@ -59,8 +66,44 @@ def procesar_anexo(
 
     if tipo_cargue != rules.CARGUE_CUPS:
         validators.validar_descripciones_repetidas(registros)
+    else:
+        validators.validar_codigos_propios_y_traslados(registros)
 
     generales: list[Hallazgo] = []
+
+    if tipo_cargue == rules.CARGUE_CUPS:
+        if soat_por_cups is None:
+            generales.append(
+                Hallazgo(
+                    fila=anexo.fila_encabezado,
+                    campo="archivo",
+                    severidad=Severidad.ADVERTENCIA,
+                    problema="no se validó contra el homologador",
+                    regla="no se indicó la carpeta de referencias",
+                    sugerencia=(
+                        "indicar la carpeta con el SUPERHOMOLOGADOR para "
+                        "cruzar CUPS y códigos SOAT"
+                    ),
+                )
+            )
+        else:
+            sin_cruce = validators.validar_contra_homologador(
+                registros, soat_por_cups
+            )
+            if sin_cruce:
+                generales.append(
+                    Hallazgo(
+                        fila=anexo.fila_encabezado,
+                        campo="archivo",
+                        severidad=Severidad.ADVERTENCIA,
+                        problema=(
+                            f"{sin_cruce} registros tienen un CUPS que no está "
+                            "en el homologador y no se pudieron cruzar"
+                        ),
+                        regla="solo se valida lo que el homologador conoce",
+                        sugerencia="revisar esos códigos manualmente",
+                    )
+                )
 
     if not registros:
         generales.append(
@@ -105,6 +148,102 @@ def procesar_anexo(
     )
 
 
+@dataclass
+class AnexoMultihoja:
+    """Todos los registros de un anexo con varias hojas del mismo tipo."""
+
+    tipo_cargue: str
+    registros: list[Registro]
+    hojas_usadas: list[str]
+    hojas_omitidas: list[str]
+    hallazgos_generales: list[Hallazgo]
+
+
+def procesar_anexo_multihoja(
+    origen: str | Path,
+    tipo_cargue: str,
+    *,
+    hojas: list[str] | None = None,
+    soat_por_cups: Mapping[str, Iterable[str]] | None = None,
+) -> AnexoMultihoja:
+    """Procesa todas las hojas de un anexo que corresponden a un tipo.
+
+    Un anexo suele traer varias hojas del mismo tipo (imagenología,
+    laboratorio, tablas...). Sin `hojas`, se toman las que se reconocen
+    para el tipo y cuyo nombre no apunta a otro tipo; en medicamentos e
+    insumos, si alguna hoja lo dice por su nombre, solo esas. El resultado
+    informa qué hojas entraron y cuáles no, para poder verificarlo.
+    """
+
+    libro = load_workbook(origen, data_only=True, read_only=True)
+    try:
+        nombres = list(libro.sheetnames)
+        candidatas = anexos.detectar_hojas(libro, tipo_cargue)
+    finally:
+        libro.close()
+
+    if hojas is not None:
+        pedidas = {h.strip() for h in hojas}
+        elegidas = [c for c in candidatas if c.nombre.strip() in pedidas]
+        inexistentes = pedidas - {c.nombre.strip() for c in elegidas}
+        if inexistentes:
+            raise anexos.LecturaFallida(
+                "Hojas no reconocidas para un cargue "
+                f"{tipo_cargue}: {', '.join(sorted(inexistentes))}. "
+                f"Hojas del archivo: {', '.join(nombres)}"
+            )
+    else:
+        elegidas = [
+            c for c in candidatas
+            if anexos._puntaje_por_nombre(c.nombre, tipo_cargue) >= 0
+        ]
+        if tipo_cargue != rules.CARGUE_CUPS:
+            con_pista = [
+                c for c in elegidas
+                if anexos._puntaje_por_nombre(c.nombre, tipo_cargue) > 0
+            ]
+            elegidas = con_pista or elegidas
+
+    if not elegidas:
+        raise anexos.LecturaFallida(
+            f"Ninguna hoja del anexo se reconoce como {tipo_cargue}. "
+            f"Hojas del archivo: {', '.join(nombres)}"
+        )
+
+    registros: list[Registro] = []
+    generales: list[Hallazgo] = []
+    vistos: set[str] = set()
+
+    for hoja in sorted(elegidas, key=lambda h: nombres.index(h.nombre)):
+        resultado = procesar_anexo(
+            origen,
+            tipo_cargue,
+            nombre_archivo=Path(origen).name,
+            hoja=hoja.nombre,
+            fila_encabezado=hoja.fila_encabezado,
+            soat_por_cups=soat_por_cups,
+        )
+        for registro in resultado.registros:
+            registro.hoja = hoja.nombre.strip()
+        registros.extend(resultado.registros)
+
+        for hallazgo in resultado.hallazgos_generales:
+            if hallazgo.problema not in vistos:
+                vistos.add(hallazgo.problema)
+                generales.append(hallazgo)
+
+    usadas = [h.nombre.strip() for h in elegidas]
+    omitidas = [n.strip() for n in nombres if n.strip() not in usadas]
+
+    return AnexoMultihoja(
+        tipo_cargue=tipo_cargue,
+        registros=registros,
+        hojas_usadas=usadas,
+        hojas_omitidas=omitidas,
+        hallazgos_generales=generales,
+    )
+
+
 # ============================================================
 # SALIDAS
 # ============================================================
@@ -142,6 +281,46 @@ def filas_de_registros(resultado: ResultadoCargue) -> list[dict[str, object]]:
         )
 
     return filas
+
+
+_CREAR_PROPIO = re.compile(r"\b(?:CREAR|CREACION)\b.*\bPROPIOS?\b")
+
+
+def candidatos_a_propio(resultado: ResultadoCargue) -> list[dict[str, object]]:
+    """Registros que probablemente necesitan un propio, separados para revisión.
+
+    El sistema no crea nada: solo los junta para que una persona decida.
+    Motivos: el anexo dice "crear propio" en alguna columna, o es un traslado.
+    """
+
+    candidatos: list[dict[str, object]] = []
+
+    for registro in resultado.registros:
+        motivos: list[str] = []
+
+        textos = [
+            parsing.normalizar_encabezado(valor)
+            for clave, valor in registro.crudo.items()
+            if clave != "_fila" and valor is not None
+        ]
+        if any(_CREAR_PROPIO.search(t) for t in textos):
+            motivos.append("el anexo dice 'crear propio'")
+        if registro.codigo in rules.CODIGOS_TRASLADO:
+            motivos.append("traslado: va como PRO o como propio")
+
+        if motivos:
+            candidatos.append(
+                {
+                    "fila": registro.fila,
+                    "codigo": registro.codigo,
+                    "descripcion": registro.descripcion_original,
+                    "valor_original": registro.valor_original,
+                    "estado": _estado(registro),
+                    "motivo": "; ".join(motivos),
+                }
+            )
+
+    return candidatos
 
 
 def _estado(registro: Registro) -> str:
@@ -224,6 +403,30 @@ def generar_salidas(
             detalle,
             destino / f"{nombre}_registros.csv",
             list(detalle[0].keys()),
+        )
+
+    por_corregir = notificacion_service.filas_por_corregir_de_registros(
+        resultado.bloqueados, resultado.hoja
+    )
+    devolucion = notificacion_service.excel_de_devolucion(por_corregir)
+    if devolucion is not None:
+        rutas["devolucion"] = destino / f"{nombre}_devolucion_prestador.xlsx"
+        rutas["devolucion"].write_bytes(devolucion)
+
+    excel = notificacion_service.excel_de_notificacion(
+        notificacion_service.filas_para_parametrizar(registros),
+        por_corregir,
+    )
+    if excel is not None:
+        rutas["notificacion"] = destino / f"{nombre}_notificacion.xlsx"
+        rutas["notificacion"].write_bytes(excel)
+
+    pendientes = candidatos_a_propio(resultado)
+    if pendientes:
+        rutas["propios_pendientes"] = _escribir_csv(
+            pendientes,
+            destino / f"{nombre}_propios_pendientes.csv",
+            list(pendientes[0].keys()),
         )
 
     return rutas

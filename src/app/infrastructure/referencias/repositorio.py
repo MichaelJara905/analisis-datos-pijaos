@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import csv
 import json
+import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -30,13 +32,22 @@ CARPETA_CACHE = ".cache_referencias"
 
 # Se sube cuando cambia la forma en que se leen las fuentes: así una caché
 # escrita por una versión anterior del código se descarta sola.
-VERSION_CACHE = 1
+VERSION_CACHE = 2
+
+# Si se define, la caché se guarda aquí en vez de junto a los originales.
+# Sirve para no escribir dentro de una carpeta compartida (por ejemplo, el
+# Drive). Los nombres llevan el del archivo de origen para no mezclarse.
+DIRECTORIO_CACHE: Path | None = None
 
 # Cómo se reconoce cada archivo dentro de la carpeta de referencias.
+# Cada fuente admite varias formas de nombre, en orden de preferencia; en
+# cada una deben aparecer todas las palabras.
 PATRONES_DE_ARCHIVO = {
-    "superhomologador": ("SUPERHOMOLOGADOR",),
-    "circular": ("CIRCULAR", "MEDICAMENTO"),
-    "maximos": ("MAXIMO",),
+    "superhomologador": [("SUPERHOMOLOGADOR",)],
+    "circular": [("PRECIOS", "UNIDAD", "CIRCULAR"), ("CIRCULAR", "MEDICAMENTO")],
+    "maximos": [("MAXIMO",)],
+    "listado_cum": [("LISTADO", "UNICO")],
+    "trazabilidad": [("TRAZABILIDAD",)],
 }
 
 MANUALES = ("UVB", "UVT", "UVR")
@@ -58,8 +69,12 @@ class Fuentes:
     superhomologador: Path | None = None
     circular: Path | None = None
     maximos: Path | None = None
+    listado_cum: Path | None = None
+    trazabilidad: Path | None = None
 
     def faltantes(self) -> list[str]:
+        """Las tres fuentes de la consulta de referencias original."""
+
         return [
             nombre
             for nombre in ("superhomologador", "circular", "maximos")
@@ -74,17 +89,48 @@ def descubrir_fuentes(carpeta: str | Path) -> Fuentes:
     if not ruta.is_dir():
         raise ReferenciaNoDisponible(f"No existe la carpeta '{ruta}'.")
 
+    archivos = [
+        (archivo, normalizar_encabezado(archivo.stem), profundidad)
+        for archivo, profundidad in _libros_de(ruta)
+    ]
     encontrados: dict[str, Path] = {}
 
-    for archivo in sorted(ruta.glob("*.xls*")):
-        nombre = normalizar_encabezado(archivo.stem)
-        for clave, patrones in PATRONES_DE_ARCHIVO.items():
-            if clave in encontrados:
-                continue
-            if all(patron in nombre for patron in patrones):
-                encontrados[clave] = archivo
+    for clave, alternativas in PATRONES_DE_ARCHIVO.items():
+        for patrones in alternativas:
+            candidatos = [
+                (profundidad, -archivo.stat().st_mtime, archivo.name, archivo)
+                for archivo, nombre, profundidad in archivos
+                if all(p in nombre for p in patrones)
+            ]
+            if candidatos:
+                # El más cercano a la carpeta indicada y, entre iguales, el
+                # modificado más recientemente.
+                encontrados[clave] = min(candidatos)[3]
+                break
 
     return Fuentes(carpeta=ruta, **encontrados)
+
+
+PROFUNDIDAD_MAXIMA = 2
+
+
+def _libros_de(raiz: Path) -> list[tuple[Path, int]]:
+    """Libros de Excel de la carpeta y de sus subcarpetas (hasta 2 niveles)."""
+
+    libros: list[tuple[Path, int]] = []
+    base = len(raiz.parts)
+
+    for actual, carpetas, nombres in os.walk(raiz):
+        profundidad = len(Path(actual).parts) - base
+        carpetas[:] = [
+            c for c in carpetas
+            if not c.startswith(".") and profundidad < PROFUNDIDAD_MAXIMA
+        ]
+        for nombre in nombres:
+            if nombre.lower().endswith((".xlsx", ".xlsm", ".xls")) and not nombre.startswith("~$"):
+                libros.append((Path(actual) / nombre, profundidad))
+
+    return libros
 
 
 # ============================================================
@@ -101,8 +147,12 @@ def _huella(ruta: Path) -> dict[str, float]:
 
 
 def _rutas_cache(ruta: Path, nombre: str) -> tuple[Path, Path]:
-    carpeta = ruta.parent / CARPETA_CACHE
-    return carpeta / f"{nombre}.csv", carpeta / f"{nombre}.json"
+    if DIRECTORIO_CACHE is None:
+        carpeta, base = ruta.parent / CARPETA_CACHE, nombre
+    else:
+        carpeta = Path(DIRECTORIO_CACHE)
+        base = f"{re.sub(r'[^A-Za-z0-9]+', '_', ruta.stem).strip('_')}__{nombre}"
+    return carpeta / f"{base}.csv", carpeta / f"{base}.json"
 
 
 def _leer_cache(ruta: Path, nombre: str) -> list[dict[str, str]] | None:
@@ -201,8 +251,14 @@ def _leer_hoja(
     fila_encabezado: int,
     columnas: dict[str, tuple[str, ...]],
     obligatorias: tuple[str, ...],
+    *,
+    unico_por: str | None = None,
 ) -> list[dict[str, str]]:
-    """Lee una hoja completa y devuelve filas con los campos pedidos."""
+    """Lee una hoja completa y devuelve filas con los campos pedidos.
+
+    Con `unico_por`, solo se conserva la primera fila de cada valor de ese
+    campo (el Listado CUM repite cada CUM una vez por rol del titular).
+    """
 
     libro = load_workbook(ruta, read_only=True, data_only=True)
 
@@ -216,6 +272,7 @@ def _leer_hoja(
         pagina = libro[hoja]
         indices: dict[str, int] = {}
         filas: list[dict[str, str]] = []
+        vistos: set[str] = set()
 
         for numero, fila in enumerate(pagina.iter_rows(values_only=True), start=1):
             if numero < fila_encabezado:
@@ -240,8 +297,16 @@ def _leer_hoja(
                 for campo, indice in indices.items()
             }
 
-            if any(registro.get(campo) for campo in obligatorias):
-                filas.append(registro)
+            if not any(registro.get(campo) for campo in obligatorias):
+                continue
+
+            if unico_por is not None:
+                clave = registro.get(unico_por, "")
+                if clave in vistos:
+                    continue
+                vistos.add(clave)
+
+            filas.append(registro)
 
         return filas
     finally:
@@ -327,14 +392,37 @@ def cargar_circular(ruta: str | Path) -> list[dict[str, str]]:
     """Carga los precios regulados de medicamentos."""
 
     archivo = Path(ruta)
+    # Reconoce las dos generaciones del libro: la derivada anterior
+    # ("Precio máx. venta Institucional...") y la nueva con fórmulas y
+    # criterio de margen ("PMV Institucional...", columna M = tope).
     columnas = {
         "cum": ("CUM/IUM",),
+        "mercado": ("MERCADO RELEVANTE",),
         "medicamento": ("MEDICAMENTO (PRESENTACION COMERCIAL)", "MEDICAMENTO"),
         "unidad_medida": ("UNIDAD DE MEDIDA",),
-        "precio_presentacion": ("PRECIO MAX. VENTA INSTITUCIONAL (PRESENTACION COMPLETA)",),
-        "precio_unidad": ("PRECIO MAX. VENTA INSTITUCIONAL POR UNIDAD",),
-        "margen_presentacion": ("MARGEN PARA IPS (PRESENTACION COMPLETA)",),
-        "margen_unidad": ("MARGEN PARA IPS POR UNIDAD",),
+        "umd_presentacion": ("UMD POR PRESENTACION", "UNIDADES POR PRESENTACION"),
+        "precio_presentacion": (
+            "PRECIO MAX. VENTA INSTITUCIONAL (PRESENTACION COMPLETA)",
+            "PMV INSTITUCIONAL (PRESENTACION COMPLETA)",
+        ),
+        "precio_unidad": (
+            "PRECIO MAX. VENTA INSTITUCIONAL POR UNIDAD",
+            "PMV INSTITUCIONAL POR UMD",
+        ),
+        "margen_presentacion": (
+            "MARGEN PARA IPS (PRESENTACION COMPLETA)",
+            "MARGEN MAX. IPS (PRESENTACION",
+        ),
+        "margen_unidad": (
+            "MARGEN PARA IPS POR UNIDAD",
+            "MARGEN MAX. IPS POR UMD",
+        ),
+        "tope_unidad": ("VALOR UNITARIO CON MARGEN IPS",),
+        "presentacion_con_margen": ("PMV PRESENTACION",),
+        "pct_margen": ("% MARGEN IPS APLICADO",),
+        "criterio": ("CRITERIO DE MARGEN",),
+        "fundamento": ("FUNDAMENTO NORMATIVO",),
+        "alerta": ("ALERTA DE REVISION",),
         "circular": ("CIRCULAR CNPMDM",),
         "vigencia": ("FECHA INICIO VIGENCIA",),
     }
@@ -344,6 +432,144 @@ def cargar_circular(ruta: str | Path) -> list[dict[str, str]]:
         "circular",
         lambda: _leer_hoja(archivo, "Precio por unidad", 1, columnas, ("cum",)),
     )
+
+
+def cargar_listado_cum(ruta: str | Path) -> list[dict[str, str]]:
+    """Carga el Listado único de medicamentos vigentes (INVIMA).
+
+    El libro trae una fila por rol del titular; aquí queda UNA por CUM.
+    """
+
+    archivo = Path(ruta)
+    columnas = {
+        "cums": ("CUMS",),
+        "expediente": ("EXPEDIENTE",),
+        "producto": ("PRODUCTO",),
+        "titular": ("TITULAR",),
+        "registro_sanitario": ("REGISTRO SANITARIO",),
+        "fecha_expedicion": ("FECHA EXPEDICION",),
+        "fecha_vencimiento": ("FECHA VENCIMIENTO",),
+        "estado_registro": ("ESTADO REGISTRO",),
+        "cantidad_cum": ("CANTIDAD CUM",),
+        "descripcion_comercial": ("DESCRIPCION COMERCIAL",),
+        "estado_cum": ("ESTADO CUM",),
+        "fecha_activo": ("FECHA ACTIVO",),
+        "fecha_inactivo": ("FECHA INACTIVO",),
+        "muestra_medica": ("MUESTRA MEDICA",),
+        "atc": ("ATC",),
+        "descripcion_atc": ("DESCRIPCION ATC",),
+        "via": ("VIA ADMINISTRACION",),
+        "concentracion": ("CONCENTRACION",),
+        "principio_activo": ("PRINCIPIO ACTIVO",),
+        "forma": ("FORMA FARMACEUTICA",),
+        "ium": ("IUM",),
+    }
+
+    return _con_cache(
+        archivo,
+        "listado_cum",
+        lambda: _leer_hoja(archivo, "Vigentes", 7, columnas, ("cums",), unico_por="cums"),
+    )
+
+
+def fecha_de_generacion_listado(ruta: str | Path) -> str:
+    """Texto 'Fecha de Generación: ...' que trae el Listado en su cabecera."""
+
+    libro = load_workbook(Path(ruta), read_only=True, data_only=True)
+    try:
+        hoja = libro["Vigentes"] if "Vigentes" in libro.sheetnames else libro.worksheets[0]
+        for fila in hoja.iter_rows(max_row=7, values_only=True):
+            for valor in fila:
+                if isinstance(valor, str) and "generaci" in valor.lower():
+                    return valor.strip()
+        return ""
+    finally:
+        libro.close()
+
+
+_CODIGO_TRAZABILIDAD = re.compile(r"^[0-9A-Z]{3,6}$")
+
+
+def cargar_trazabilidad(ruta: str | Path) -> list[dict[str, str]]:
+    """Carga la trazabilidad Res. 2641/2024 -> Res. 2706/2025.
+
+    La hoja repite los encabezados (código sin puntos, descripción...) para
+    la resolución anterior y la nueva, así que se lee por posición:
+    A-D anterior, E trazabilidad, F-I nueva.
+    """
+
+    archivo = Path(ruta)
+
+    def leer() -> list[dict[str, str]]:
+        libro = load_workbook(archivo, read_only=True, data_only=True)
+        try:
+            if "Trazabilidad" not in libro.sheetnames:
+                raise ReferenciaNoDisponible(
+                    f"'{archivo.name}' no tiene la hoja 'Trazabilidad'. "
+                    f"Hojas: {', '.join(libro.sheetnames)}"
+                )
+
+            filas: list[dict[str, str]] = []
+            encabezado_ok = False
+
+            for numero, fila in enumerate(libro["Trazabilidad"].iter_rows(values_only=True), start=1):
+                valores = [texto_de_celda(v) for v in (list(fila) + [None] * 9)[:9]]
+
+                if not encabezado_ok:
+                    if (
+                        normalizar_encabezado(valores[4]) == "TRAZABILIDAD"
+                        and normalizar_encabezado(valores[0]) == "ANEXO"
+                    ):
+                        encabezado_ok = True
+                    continue
+
+                anterior, nuevo = valores[1].strip().upper(), valores[6].strip().upper()
+                if not (
+                    _CODIGO_TRAZABILIDAD.match(anterior) or _CODIGO_TRAZABILIDAD.match(nuevo)
+                ):
+                    continue
+                if len(anterior) != 6 and len(nuevo) != 6:
+                    continue
+
+                filas.append(
+                    {
+                        "anexo_anterior": valores[0],
+                        "codigo_anterior": anterior if _CODIGO_TRAZABILIDAD.match(anterior) else "",
+                        "descripcion_anterior": valores[3],
+                        "trazabilidad": valores[4],
+                        "anexo_nuevo": valores[5],
+                        "codigo_nuevo": nuevo if _CODIGO_TRAZABILIDAD.match(nuevo) else "",
+                        "descripcion_nueva": valores[8],
+                    }
+                )
+
+            if not encabezado_ok:
+                raise ReferenciaNoDisponible(
+                    f"No se encontró la fila de encabezados de la trazabilidad en '{archivo.name}'."
+                )
+            return filas
+        finally:
+            libro.close()
+
+    return _con_cache(archivo, "trazabilidad", leer)
+
+
+def cargar_convenciones_trazabilidad(ruta: str | Path) -> dict[str, str]:
+    """Significado de cada tipo de trazabilidad (hoja 'Convenciones')."""
+
+    libro = load_workbook(Path(ruta), read_only=True, data_only=True)
+    try:
+        if "Convenciones" not in libro.sheetnames:
+            return {}
+        convenciones: dict[str, str] = {}
+        for fila in libro["Convenciones"].iter_rows(min_row=11, values_only=True):
+            clave = texto_de_celda(fila[0] if fila else None)
+            texto = texto_de_celda(fila[1] if len(fila) > 1 else None)
+            if clave and texto:
+                convenciones[re.sub(r"\s+", " ", clave).upper()] = texto
+        return convenciones
+    finally:
+        libro.close()
 
 
 def cargar_maximos(ruta: str | Path) -> list[dict[str, str]]:

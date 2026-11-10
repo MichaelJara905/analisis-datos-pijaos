@@ -86,6 +86,49 @@ def cargar_referencias(carpeta: str | Path) -> Referencias:
     return referencias
 
 
+def cargar_superhomologador(carpeta: str | Path) -> Referencias:
+    """Solo el SuperHomologador (manuales y homologador), sin las demás fuentes."""
+
+    fuentes = repositorio.descubrir_fuentes(carpeta)
+    if fuentes.superhomologador is None:
+        raise ReferenciaNoDisponible(
+            f"No hay un archivo SUPERHOMOLOGADOR en '{carpeta}'."
+        )
+
+    referencias = Referencias(fuentes=fuentes)
+    for sigla in repositorio.MANUALES:
+        referencias.manuales[sigla] = repositorio.cargar_manual(
+            fuentes.superhomologador, sigla
+        )
+    for fila in repositorio.cargar_homologador(fuentes.superhomologador):
+        referencias.homologos_por_cups.setdefault(fila["cups"], []).append(fila)
+
+    return referencias
+
+
+def cargar_soat_por_cups(carpeta: str | Path) -> dict[str, frozenset[str]]:
+    """Solo el homologador: CUPS -> códigos SOAT que le corresponden.
+
+    Es la parte liviana de las referencias; no abre la Circular ni Máximos
+    y Mínimos. Lo usa la validación de los cargues CUPS.
+
+    Raises:
+        ReferenciaNoDisponible: si la carpeta no tiene el SUPERHOMOLOGADOR.
+    """
+
+    fuentes = repositorio.descubrir_fuentes(carpeta)
+    if fuentes.superhomologador is None:
+        raise ReferenciaNoDisponible(
+            f"No hay un archivo SUPERHOMOLOGADOR en '{carpeta}'."
+        )
+
+    acumulado: dict[str, set[str]] = {}
+    for fila in repositorio.cargar_homologador(fuentes.superhomologador):
+        acumulado.setdefault(fila["cups"], set()).add(fila["codigo_ley"])
+
+    return {cups: frozenset(leyes) for cups, leyes in acumulado.items()}
+
+
 # ============================================================
 # CONSULTAS
 # ============================================================
@@ -103,13 +146,24 @@ def _redondear(valor: float) -> int:
     return int(Decimal(str(valor)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
+def _a_la_centena(valor: float) -> int:
+    """Redondeo del libro: ROUND(x, -2), la mitad hacia arriba."""
+
+    return int(Decimal(str(valor)).quantize(Decimal("1E2"), rounding=ROUND_HALF_UP))
+
+
 def tarifas_reguladas(
     referencias: Referencias,
     codigo_ley: str,
     *,
     porcentaje: int = 0,
 ) -> list[dict[str, object]]:
-    """Valor del código ley en cada manual, con el descuento aplicado."""
+    """Valor del código ley en cada manual, con el descuento aplicado.
+
+    La base es el valor del manual SIN el descuento que la hoja trae
+    incorporado (en UVT, -8%): ese descuento es negociable y no forma
+    parte de la tarifa. El valor de la hoja se informa aparte.
+    """
 
     resultado: list[dict[str, object]] = []
 
@@ -118,9 +172,14 @@ def tarifas_reguladas(
         if fila is None:
             continue
 
-        base = _numero(fila.get("valor_resultante")) or _numero(
-            fila.get("valor_calculado")
-        )
+        valor_hoja = _numero(fila.get("valor_resultante"))
+        calculado = _numero(fila.get("valor_calculado"))
+
+        if calculado is not None:
+            base = _a_la_centena(calculado)
+        else:
+            base = valor_hoja
+
         con_descuento = (
             _redondear(base * (1 + porcentaje / 100)) if base is not None else None
         )
@@ -132,6 +191,7 @@ def tarifas_reguladas(
                 "descripcion": fila.get("descripcion", ""),
                 "puntaje": _numero(fila.get("puntaje")),
                 "valor_manual": _redondear(base) if base is not None else None,
+                "valor_hoja": _redondear(valor_hoja) if valor_hoja is not None else None,
                 "porcentaje": porcentaje,
                 "valor_con_descuento": con_descuento,
             }
@@ -212,13 +272,16 @@ def consultar_medicamento(referencias: Referencias, cum: str) -> dict[str, objec
     if fila is not None:
         precio = _numero(fila.get("precio_unidad"))
         margen = _numero(fila.get("margen_unidad"))
+        tope = _numero(fila.get("tope_unidad"))   # libro nuevo: columna M
         regulado = {
             "medicamento": fila.get("medicamento", ""),
             "unidad_medida": fila.get("unidad_medida", ""),
             "precio_unidad": precio,
             "margen_unidad": margen,
             "costo_total_unidad": (
-                None if precio is None else _redondear(precio + (margen or 0))
+                round(tope, 2)
+                if tope is not None
+                else None if precio is None else _redondear(precio + (margen or 0))
             ),
             "circular": fila.get("circular", ""),
             "vigencia": fila.get("vigencia", ""),

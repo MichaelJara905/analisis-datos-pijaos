@@ -61,16 +61,30 @@ def texto_de_celda(valor: object) -> str:
     return str(valor).strip()
 
 
-def codigo_de_celda(valor: object) -> tuple[str, str]:
-    """Devuelve el código como texto.
+def codigo_de_celda(
+    valor: object,
+    *,
+    conservar_espacios: bool = False,
+) -> tuple[str, str]:
+    """Devuelve el código como texto, sin cambiarle nada.
+
+    El código se respeta tal cual está en la celda: ceros a la izquierda,
+    símbolos y mayúsculas incluidos. Con `conservar_espacios` tampoco se
+    recortan los espacios de los extremos (los códigos de insumo son del
+    prestador y GEMANET ya tiene algunos con espacios).
 
     Si la celda venía como número, avisa: Excel ya pudo haber perdido los
     ceros a la izquierda y eso no se puede recuperar desde el archivo.
     """
 
-    texto = texto_de_celda(valor).strip()
+    if conservar_espacios and isinstance(valor, str):
+        # Los espacios se respetan; los saltos de línea y tabulaciones de los
+        # extremos nunca son parte de un código y no caben en el archivo.
+        texto = valor.strip("\r\n\t\x0b\x0c")
+    else:
+        texto = texto_de_celda(valor).strip()
 
-    if texto == "":
+    if texto.strip() == "":
         return "", "el código está vacío"
 
     if isinstance(valor, (int, float)) and not isinstance(valor, bool):

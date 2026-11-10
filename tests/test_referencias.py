@@ -281,6 +281,20 @@ def test_contratos_del_codigo(carpeta_referencias) -> None:
     assert contratos[0]["prestador"] == "PRESTADOR X"
 
 
+def test_soat_por_cups_agrupa_los_homologados(carpeta_referencias) -> None:
+    mapa = referencias_service.cargar_soat_por_cups(carpeta_referencias)
+
+    assert mapa["441302"] == frozenset({"18300"})
+    assert mapa["902216"] == frozenset({"19646", "19642"})
+
+
+def test_soat_por_cups_sin_homologador_falla_claro(tmp_path) -> None:
+    _circular(tmp_path)
+
+    with pytest.raises(referencias_service.ReferenciaNoDisponible):
+        referencias_service.cargar_soat_por_cups(tmp_path)
+
+
 # ============================================================
 # CACHÉ
 # ============================================================

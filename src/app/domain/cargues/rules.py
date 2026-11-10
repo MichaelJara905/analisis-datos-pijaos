@@ -106,6 +106,21 @@ REEMPLAZOS_DE_CARACTERES = {
     "\u2014": "-",
     "\u00a0": " ",   # espacio duro
     "×": "X",
+    # Equivalentes ASCII sin ambigüedad (aparecieron en el anexo de Traumasur)
+    "Φ": "",         # phi griega (símbolo de diámetro): se elimina, como la Ф
+    "φ": "",
+    "₂": "2",        # subíndice dos (ChFN₂ -> ChFN2)
+    "Ω": "OMEGA",    # omega griega (Anillo en Ω -> Anillo en OMEGA)
+    "Ⅰ": "I",
+    "Ⅱ": "II",
+    "Ⅲ": "III",
+    "Ⅳ": "IV",
+    "Ⅴ": "V",
+    "（": "(",
+    "）": ")",
+    "½": "1/2",
+    "¼": "1/4",
+    "¾": "3/4",
 }
 
 # La descripción NO se pasa a mayúsculas ni se le compactan los espacios
@@ -118,15 +133,46 @@ COMPACTAR_ESPACIOS_INTERNOS = False
 # FORMATO DE LOS CÓDIGOS
 # ============================================================
 
-PATRON_CODIGO_CUPS = r"^\d{6}$"          # CONFIRMADO: siempre 6 dígitos
+# CONFIRMADO por el equipo y contrastado con el homologador (8.902 filas) y
+# la trazabilidad de la Res. 2706: casi siempre 6 dígitos, a veces con
+# letras (estancias 129M01, traslados 601T02...). Los propios son
+# PRO + 4 o más dígitos (PRO6212) y se cargan como un CUPS normal.
+PATRON_CODIGO_CUPS = r"^(?:[0-9A-Z]{6}|PRO\d{4,})$"
+PATRON_CODIGO_PROPIO = r"^PRO\d{4,}$"
+PREFIJO_CODIGO_PROPIO = "PRO"
+DIGITOS_CODIGO_PROPIO = 4
+
+# Traslados: nunca llevan SOAT; van como PRO (valor o kilometraje) o como
+# propios.  (CONFIRMADO por el equipo; son los 4 del homologador)
+CODIGOS_TRASLADO = ("601T01", "601T02", "602T01", "602T02")
+
+# Creación de propios: separador distinto al de los demás cargues.
+SEPARADOR_PROPIOS = "|"
+REEMPLAZO_SEPARADOR_PROPIOS = "-"
 PATRON_CODIGO_CUMS = r"^\d+-\d+$"        # CONFIRMADO: expediente-consecutivo
-PATRON_CODIGO_INS = r"^[A-Za-z0-9._\-]+$"  # INFERIDO: libre, sin espacios
+# CONFIRMADO con lo que GEMANET ya tiene cargado: los códigos de insumo son
+# del prestador y pueden llevar '/', espacios, paréntesis y similares
+# (128-822/02, MPF-BT 50 35-S). Solo se rechaza lo que rompe el archivo: el
+# separador ';', los saltos de línea y lo que no es ASCII imprimible.
+PATRON_CODIGO_INS = r"^(?!.*;)[\x20-\x7e]+$"
 
 PATRONES_DE_CODIGO = {
     CARGUE_CUPS: PATRON_CODIGO_CUPS,
     CARGUE_CUMS: PATRON_CODIGO_CUMS,
     CARGUE_INS: PATRON_CODIGO_INS,
 }
+
+# Textos de relleno que a veces vienen en la columna de código (anexos reales).
+CODIGOS_DE_RELLENO = (
+    "N/A", "NA", "N.A.", "NO APLICA", "SIN CODIGO", "S/C", "S/N",
+    "PENDIENTE", "POR DEFINIR", "POR ASIGNAR",
+)
+
+# Un código de insumo con más texto que esto parece una frase, no un código.
+# Calibrado con lo que GEMANET ya tiene (Traumasur: largo máximo 19, nunca más
+# de 2 espacios) y con los anexos (varios códigos pegados en una celda).
+LARGO_MAXIMO_CODIGO_INS = 25
+ESPACIOS_MAXIMOS_CODIGO_INS = 2
 
 # Códigos ley del superhomologador: de 4 a 6 dígitos.
 PATRON_CODIGO_LEY = r"^\d{4,6}$"
@@ -163,6 +209,7 @@ TEXTOS_SIN_TARIFA = (
 ALIAS_DE_COLUMNAS = {
     CARGUE_INS: {
         "codigo": (
+            "IDSERVICIO",
             "COD INTERNO IPS",
             "CODIGO INTERNO IPS",
             "CODIGO INTERNO",
@@ -181,6 +228,7 @@ ALIAS_DE_COLUMNAS = {
             "NOMBRE INSUMO",
             "NOMBRE",
             "DETALLE",
+            "SERVICIO",
         ),
         "valor": (
             "TARIFA OFERTADA",
@@ -190,6 +238,8 @@ ALIAS_DE_COLUMNAS = {
             "TARIFA",
             "VALOR",
             "PRECIO",
+            "OFERTA 2026",
+            "OFERTA",
         ),
         "invima": (
             "COD INVIMA",
@@ -218,6 +268,8 @@ ALIAS_DE_COLUMNAS = {
             "TARIFA",
             "VALOR",
             "PRECIO",
+            "OFERTA 2026",
+            "OFERTA",
         ),
         "expediente": (
             "NO DE EXPEDIENTE",
@@ -228,6 +280,7 @@ ALIAS_DE_COLUMNAS = {
             "TARIFARIO",
             "TIPO DE TARIFA",
             "TIPO TARIFA",
+            "NOMBRE TARIFA",
         ),
         "codigo_ley": (
             "CODIGO HOMOLOGO SOAT",
@@ -247,6 +300,7 @@ ALIAS_DE_COLUMNAS = {
     CARGUE_CUPS: {
         "codigo": (
             "CUPS",
+            "CUPS/ PROPIO",
             "CODIGO CUPS",
             "CODIGO SERVICIO",
             "CODIGO",
@@ -261,6 +315,8 @@ ALIAS_DE_COLUMNAS = {
         "valor": (
             "VALOR (LIQUIDACION DE ACUERDO A MANUAL Y TARIFA OFERTADA",
             "VALOR LIQUIDACION",
+            "VALOR TARIFA CON DSCTO",
+            "VALOR CON DESCUENTO",
             "TARIFA OFERTADA",
             "VALOR",
             "TARIFA",
@@ -271,10 +327,12 @@ ALIAS_DE_COLUMNAS = {
             "MANUAL TARIFARIO",
             "TIPO DE TARIFA",
             "TIPO TARIFA",
+            "NOMBRE TARIFA",
         ),
         "codigo_ley": (
             "CODIGO HOMOLOGO SOAT / UVR SI ES ISS",
             "CODIGO HOMOLOGO SOAT",
+            "CODIGO SOAT HOMOLOGO",
             "CODIGO HOMOLOGO",
             "CODIGO LEY",
             "COD SOAT",
@@ -284,8 +342,18 @@ ALIAS_DE_COLUMNAS = {
             "TARIFA OFERTADA (% DE DESCUENTO)",
             "PORCENTAJE DE DESCUENTO",
             "% DE DESCUENTO",
+            "% DESCUENTO DE LA TARIFA",
+            "% TARIFA DSCTO",
             "PORCENTAJE",
             "DESCUENTO",
+        ),
+        # Código interno del prestador (opcional): sirve para explicar los
+        # CUPS repetidos con distinto código interno.
+        "codigo_interno": (
+            "CUPS CLINALSOFT",
+            "CODIGO CLINALSOFT",
+            "CODIGO INTERNO",
+            "COD INTERNO",
         ),
     },
 }

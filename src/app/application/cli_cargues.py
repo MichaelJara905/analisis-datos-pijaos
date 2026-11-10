@@ -17,8 +17,9 @@ import argparse
 import sys
 from pathlib import Path
 
-from src.app.application import cargues_service
+from src.app.application import cargues_service, referencias_service
 from src.app.domain.cargues import rules
+from src.app.infrastructure.referencias.repositorio import ReferenciaNoDisponible
 from src.app.domain.cargues.model import Severidad
 from src.app.infrastructure.excel.anexos import LecturaFallida
 
@@ -47,6 +48,14 @@ def construir_parser() -> argparse.ArgumentParser:
         help="forzar la fila de encabezados (base 1)",
     )
     parser.add_argument(
+        "--referencias",
+        default=None,
+        help=(
+            "carpeta con el SUPERHOMOLOGADOR, para validar los CUPS "
+            "contra el homologador"
+        ),
+    )
+    parser.add_argument(
         "--solo-analizar",
         action="store_true",
         help="no escribe archivos, solo muestra el resumen",
@@ -62,6 +71,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"No existe el archivo: {ruta}", file=sys.stderr)
         return 2
 
+    soat_por_cups = None
+    if argumentos.referencias:
+        try:
+            soat_por_cups = referencias_service.cargar_soat_por_cups(
+                argumentos.referencias
+            )
+        except ReferenciaNoDisponible as error:
+            print(f"No se pudo cargar el homologador: {error}", file=sys.stderr)
+            return 4
+
     try:
         resultado = cargues_service.procesar_anexo(
             ruta,
@@ -69,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
             nombre_archivo=ruta.name,
             hoja=argumentos.hoja,
             fila_encabezado=argumentos.fila_encabezado,
+            soat_por_cups=soat_por_cups,
         )
     except LecturaFallida as error:
         print(f"No se pudo leer el anexo:\n{error}", file=sys.stderr)
@@ -110,6 +130,13 @@ def _imprimir_resumen(resultado) -> None:
     print("\nResumen:")
     for clave, valor in resumen.items():
         print(f"  {clave:20} {valor}")
+
+    pendientes = cargues_service.candidatos_a_propio(resultado)
+    if pendientes:
+        print(
+            f"\nPosibles propios por decidir: {len(pendientes)} "
+            "(no se crea ninguno; ver _propios_pendientes.csv)"
+        )
 
     bloqueantes = [
         h for h in resultado.hallazgos if h.severidad is Severidad.BLOQUEANTE

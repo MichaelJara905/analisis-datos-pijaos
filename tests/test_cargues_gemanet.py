@@ -265,17 +265,29 @@ def test_bajo_cotizacion_queda_bloqueado() -> None:
     assert construir_registro(fila, rules.CARGUE_CUPS).bloqueado
 
 
-def test_duplicados_avisan_pero_no_bloquean() -> None:
+def test_codigos_repetidos_se_bloquean_todos_y_dicen_donde_estan() -> None:
     filas = [
         {"_fila": 11, "codigo": "441302", "descripcion": "EGD", "valor": 527340},
         {"_fila": 12, "codigo": "441302", "descripcion": "EGD PEDIATRICA", "valor": 1028969},
+        {"_fila": 13, "codigo": "441303", "descripcion": "OTRO", "valor": 1000},
     ]
     registros = [construir_registro(f, rules.CARGUE_CUPS) for f in filas]
 
     validar_duplicados(registros)
 
-    assert all(not r.bloqueado for r in registros)
-    assert all(r.tiene_advertencias for r in registros)
+    assert registros[0].bloqueado and registros[1].bloqueado
+    assert not registros[2].bloqueado
+    problema = next(h.problema for h in registros[0].hallazgos if "aparece" in h.problema)
+    assert "2 veces" in problema and "11, 12" in problema
+    assert "527340" in problema and "1028969" in problema      # los valores distintos
+
+
+def test_el_repetido_se_detecta_aunque_difiera_el_espacio_final() -> None:
+    registros = [_ins("CS-093"), _ins("CS-093 ")]
+
+    validar_duplicados(registros)
+
+    assert all(r.bloqueado for r in registros)
 
 
 def test_descripcion_con_punto_y_coma_se_corrige_y_no_bloquea() -> None:
@@ -421,3 +433,218 @@ def test_el_anexo_original_no_se_modifica(tmp_path) -> None:
     cargues_service.generar_salidas(resultado, tmp_path / "salidas")
 
     assert ruta.read_bytes() == antes
+
+
+# ============================================================
+# CÓDIGOS CUPS ALFANUMÉRICOS, PROPIOS Y TRASLADOS
+# ============================================================
+
+def _cups(codigo, **campos):
+    fila = {"_fila": 11, "codigo": codigo, "descripcion": "X", "valor": 1000}
+    fila.update(campos)
+    return construir_registro(fila, rules.CARGUE_CUPS)
+
+
+@pytest.mark.parametrize("codigo", ["810116", "129M01", "601T02", "A12345", "PRO6212"])
+def test_cups_validos_alfanumericos_y_propios(codigo) -> None:
+    assert not _cups(codigo).bloqueado
+
+
+@pytest.mark.parametrize("codigo", ["44130", "4413022", "129m01", "441-02", "PRO12"])
+def test_cups_con_formato_invalido_bloquea(codigo) -> None:
+    assert _cups(codigo).bloqueado
+
+
+def test_cinco_digitos_sugiere_el_cero_inicial() -> None:
+    registro = _cups("53109")
+    sugerencias = " ".join(h.sugerencia for h in registro.hallazgos)
+    assert registro.bloqueado
+    assert "053109" in sugerencias
+
+
+def test_el_cups_alfanumerico_no_cambia_el_txt() -> None:
+    registro = _registro(codigo="129M01", valor=362100)
+    assert (
+        txt_writer.construir_linea(registro, rules.CARGUE_CUPS)
+        == "129M01;362100;PRO;0;0;"
+    )
+
+
+@pytest.mark.parametrize("codigo", ["601T01", "602T01", "602T02", "PRO6212"])
+def test_traslado_o_propio_regulado_queda_bloqueado(codigo) -> None:
+    from src.app.domain.cargues.validators import validar_codigos_propios_y_traslados
+
+    registro = _cups(codigo, tipo_tarifa="UVB", codigo_ley="39601")
+    validar_codigos_propios_y_traslados([registro])
+    assert any("nunca llevan SOAT" in h.regla for h in registro.hallazgos)
+    assert registro.bloqueado
+
+
+HOMOLOGADOS = {
+    "441302": frozenset({"18300"}),
+    "129M02": frozenset({"38122", "38123", "38124"}),
+}
+
+
+def test_pro_con_valor_igual_al_soat_queda_bloqueado() -> None:
+    from src.app.domain.cargues.validators import validar_contra_homologador
+
+    registro = _cups("441302", tipo_tarifa="PRO", valor=18300)
+    validar_contra_homologador([registro], HOMOLOGADOS)
+
+    assert registro.bloqueado
+    assert any("código SOAT" in h.problema for h in registro.hallazgos)
+
+
+def test_pro_con_valor_normal_no_se_marca() -> None:
+    from src.app.domain.cargues.validators import validar_contra_homologador
+
+    registro = _cups("441302", tipo_tarifa="PRO", valor=527340)
+    validar_contra_homologador([registro], HOMOLOGADOS)
+
+    assert not registro.bloqueado
+
+
+def test_regulado_con_soat_distinto_al_homologado_bloquea() -> None:
+    from src.app.domain.cargues.validators import validar_contra_homologador
+
+    registro = _cups("441302", tipo_tarifa="UVB", codigo_ley="18301")
+    validar_contra_homologador([registro], HOMOLOGADOS)
+
+    assert registro.bloqueado
+    assert any("18300" in h.sugerencia for h in registro.hallazgos)
+
+
+@pytest.mark.parametrize("ley", ["38122", "38124"])
+def test_regulado_con_uno_de_varios_homologados_pasa(ley) -> None:
+    from src.app.domain.cargues.validators import validar_contra_homologador
+
+    registro = _cups("129M02", tipo_tarifa="UVB", codigo_ley=ley)
+    validar_contra_homologador([registro], HOMOLOGADOS)
+
+    assert not registro.bloqueado
+
+
+def test_cups_fuera_del_homologador_no_se_marca_y_se_cuenta() -> None:
+    from src.app.domain.cargues.validators import validar_contra_homologador
+
+    registro = _cups("999999", tipo_tarifa="UVB", codigo_ley="1234")
+    sin_cruce = validar_contra_homologador([registro], HOMOLOGADOS)
+
+    assert sin_cruce == 1
+    assert not registro.bloqueado
+
+
+def test_servicio_avisa_cuando_no_hay_homologador(tmp_path) -> None:
+    ruta = _crear_anexo(
+        tmp_path, "SERVICIOS", ["CUPS", "VALOR"], [["441302", 527340]]
+    )
+
+    resultado = cargues_service.procesar_anexo(ruta, rules.CARGUE_CUPS)
+
+    assert any(
+        "homologador" in h.problema for h in resultado.hallazgos_generales
+    )
+
+
+def test_servicio_bloquea_con_homologador(tmp_path) -> None:
+    ruta = _crear_anexo(
+        tmp_path, "SERVICIOS", ["CUPS", "VALOR"], [["441302", 18300], ["902216", 12000]]
+    )
+
+    resultado = cargues_service.procesar_anexo(
+        ruta, rules.CARGUE_CUPS, soat_por_cups=HOMOLOGADOS
+    )
+
+    assert resultado.resumen()["bloqueados"] == 1
+    assert len(resultado.listos) == 1
+
+
+def test_traslado_propio_no_se_bloquea() -> None:
+    from src.app.domain.cargues.validators import validar_codigos_propios_y_traslados
+
+    registro = _cups("601T02", tipo_tarifa="PRO", valor=35456)
+    validar_codigos_propios_y_traslados([registro])
+    assert not registro.bloqueado
+
+
+# ============================================================
+# CÓDIGOS DE INSUMO DEL PRESTADOR Y CARACTERES EQUIVALENTES
+# ============================================================
+
+def _ins(codigo):
+    return construir_registro(
+        {"_fila": 5, "codigo": codigo, "descripcion": "TORNILLO", "valor": 1000},
+        rules.CARGUE_INS,
+    )
+
+
+@pytest.mark.parametrize(
+    "codigo",
+    ["128-822/02", "MPF-BT 50 35-S", "PER 11-14-S", "241.021412", "INS0020179", "107-210/41", "CS-093 "],
+)
+def test_codigos_de_insumo_del_prestador_con_barra_y_espacios_son_validos(codigo) -> None:
+    assert not _ins(codigo).bloqueado
+
+
+@pytest.mark.parametrize("codigo", ["AB;12", "107-210\n41", "CÓDIGO-1"])
+def test_codigo_de_insumo_que_rompe_el_archivo_se_bloquea(codigo) -> None:
+    assert _ins(codigo).bloqueado
+
+
+def test_el_codigo_de_insumo_no_se_recorta() -> None:
+    """Los códigos de insumo se respetan tal cual, incluso con espacios al final."""
+
+    registro = _ins("CS-093 ")
+    assert registro.codigo == "CS-093 "
+
+
+@pytest.mark.parametrize(
+    ("original", "esperado"),
+    [
+        ("PLACA TIPO Ⅱ", "PLACA TIPO II"),
+        ("TORNILLO （3.5）", "TORNILLO (3.5)"),
+        ("SUTURA ½ CIRCULO", "SUTURA 1/2 CIRCULO"),
+    ],
+)
+def test_caracteres_equivalentes_pasan_a_ascii(original, esperado) -> None:
+    saneada, cambios = sanitizer.sanear_descripcion(original)
+    assert saneada == esperado
+    assert cambios and not sanitizer.caracteres_no_soportados(saneada)
+
+
+@pytest.mark.parametrize(
+    ("original", "esperado"),
+    [
+        ("TORNILLO Φ 3.5 MM", "TORNILLO 3.5 MM"),
+        ("GUIA φ1.2 MM NITINOL", "GUIA 1.2 MM NITINOL"),
+        ("Φ 2.7 MM", "2.7 MM"),
+    ],
+)
+def test_phi_griega_se_elimina_y_queda_registrada(original, esperado) -> None:
+    saneada, cambios = sanitizer.sanear_descripcion(original)
+    assert saneada == esperado
+    assert any("(eliminado)" in cambio for cambio in cambios)
+
+
+@pytest.mark.parametrize(
+    ("original", "esperado"),
+    [
+        ("Broca calibrada de Ø 7.5 / 2.8 mm CHARFIX₂", "Broca calibrada de D 7.5 / 2.8 mm CHARFIX2"),
+        ("Anillo en Ω Ω110mm  S", "Anillo en OMEGA OMEGA110mm  S"),
+    ],
+)
+def test_subindice_dos_y_omega_pasan_a_ascii(original, esperado) -> None:
+    saneada, cambios = sanitizer.sanear_descripcion(original)
+    assert saneada == esperado
+    assert not sanitizer.caracteres_no_soportados(saneada)
+    assert cambios
+
+
+def test_phi_ya_no_bloquea_el_registro() -> None:
+    registro = construir_registro(
+        {"_fila": 9, "codigo": "INS1", "descripcion": "TORNILLO Φ 3.5 MM", "valor": 1000},
+        rules.CARGUE_INS,
+    )
+    assert not registro.bloqueado
+    assert registro.descripcion == "TORNILLO 3.5 MM"

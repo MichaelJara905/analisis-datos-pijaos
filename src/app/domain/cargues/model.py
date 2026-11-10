@@ -64,6 +64,7 @@ class Registro:
     porcentaje_norma: str = "0"
     hallazgos: list[Hallazgo] = field(default_factory=list)
     crudo: dict[str, object] = field(default_factory=dict)
+    hoja: str = ""
 
     # --------------------------------------------------------
 
