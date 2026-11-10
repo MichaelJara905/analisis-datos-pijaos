@@ -109,6 +109,8 @@ REEMPLAZOS_DE_CARACTERES = {
     # Equivalentes ASCII sin ambigüedad (aparecieron en el anexo de Traumasur)
     "Φ": "",         # phi griega (símbolo de diámetro): se elimina, como la Ф
     "φ": "",
+    "₂": "2",        # subíndice dos (ChFN₂ -> ChFN2)
+    "Ω": "OMEGA",    # omega griega (Anillo en Ω -> Anillo en OMEGA)
     "Ⅰ": "I",
     "Ⅱ": "II",
     "Ⅲ": "III",

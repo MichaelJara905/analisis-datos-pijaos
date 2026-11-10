@@ -615,6 +615,20 @@ def test_phi_griega_se_elimina_y_queda_registrada(original, esperado) -> None:
     assert any("(eliminado)" in cambio for cambio in cambios)
 
 
+@pytest.mark.parametrize(
+    ("original", "esperado"),
+    [
+        ("Broca calibrada de Ø 7.5 / 2.8 mm CHARFIX₂", "Broca calibrada de D 7.5 / 2.8 mm CHARFIX2"),
+        ("Anillo en Ω Ω110mm  S", "Anillo en OMEGA OMEGA110mm  S"),
+    ],
+)
+def test_subindice_dos_y_omega_pasan_a_ascii(original, esperado) -> None:
+    saneada, cambios = sanitizer.sanear_descripcion(original)
+    assert saneada == esperado
+    assert not sanitizer.caracteres_no_soportados(saneada)
+    assert cambios
+
+
 def test_phi_ya_no_bloquea_el_registro() -> None:
     registro = construir_registro(
         {"_fila": 9, "codigo": "INS1", "descripcion": "TORNILLO Φ 3.5 MM", "valor": 1000},
