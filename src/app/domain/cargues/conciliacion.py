@@ -53,6 +53,8 @@ class ResultadoConciliacion:
     diferencias: list[dict[str, object]] = field(default_factory=list)
     solo_gemanet: list[dict[str, object]] = field(default_factory=list)
     inconsistencias: list[dict[str, object]] = field(default_factory=list)
+    # Registros que no están en GEMANET y se pueden cargar, en el orden del anexo.
+    a_cargar: list[Registro] = field(default_factory=list)
 
     def resumen(self) -> dict[str, int]:
         return {
@@ -97,6 +99,9 @@ def _porcentaje_entero(texto: str) -> int | None:
 
 def _diferencias(registro: Registro, gema: RegistroGemanet) -> list[str]:
     motivos: list[str] = []
+
+    if gema.activo.strip().upper() == "NO":
+        motivos.append("está cargado pero INACTIVO en GEMANET")
 
     if registro.es_regulado != gema.es_regulado:
         motivos.append(
@@ -240,6 +245,7 @@ def conciliar(
                 resultado.faltan_listos.append(
                     _fila(registro, "LISTO PARA CARGAR", linea=linea(registro))
                 )
+                resultado.a_cargar.append(registro)
             continue
 
         if repetido:

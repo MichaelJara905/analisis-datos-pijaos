@@ -300,12 +300,81 @@ def test_conciliacion_completa(tmp_path) -> None:
     assert "C-908424-18" in resultado.inconsistencias[0]["detalle"]
 
 
+def test_txt_lleva_solo_lo_que_falta_y_es_valido(tmp_path) -> None:
+    resultado, procesado, reporte = conciliacion_service.conciliar_anexo(
+        _anexo_cups(tmp_path), rules.CARGUE_CUPS, _gema_cups(tmp_path)
+    )
+
+    rutas = conciliacion_service.generar_informes(
+        resultado, procesado, tmp_path / "out", reporte=reporte
+    )
+    contenido = rutas["txt"].read_bytes()
+
+    # Solo 937001: 890271, 053109 y 815601 ya están; 908424 está repetido;
+    # "TEXTO LIBRE" tiene error.
+    assert contenido == b"937001;35100;PRO;0;0;"
+    assert not contenido.endswith(b"\r\n")
+
+
+def test_el_txt_nunca_trae_un_codigo_que_ya_esta_en_gemanet(tmp_path) -> None:
+    resultado, procesado, reporte = conciliacion_service.conciliar_anexo(
+        _anexo_cups(tmp_path), rules.CARGUE_CUPS, _gema_cups(tmp_path)
+    )
+
+    for linea in conciliacion_service.construir_txt(resultado).decode("ascii").split("\r\n"):
+        assert clave_codigo(linea.split(";")[0]) not in reporte.registros
+
+
+def test_la_verificacion_final_detecta_repetidos_y_ya_cargados() -> None:
+    gema = {"111111": _gema("111111")}
+    contenido = b"111111;1;PRO;0;0;\r\n222222;1;PRO;0;0;\r\n222222;2;PRO;0;0;"
+
+    problemas = conciliacion_service.verificar_txt(contenido, gema)
+
+    assert any("ya está en GEMANET" in p for p in problemas)
+    assert any("se repite" in p for p in problemas)
+
+
+def test_si_la_verificacion_falla_no_se_escribe_el_txt(tmp_path, monkeypatch) -> None:
+    resultado, procesado, reporte = conciliacion_service.conciliar_anexo(
+        _anexo_cups(tmp_path), rules.CARGUE_CUPS, _gema_cups(tmp_path)
+    )
+    resultado.a_cargar.append(resultado.a_cargar[0])     # fuerza un repetido
+
+    with pytest.raises(conciliacion_service.TxtInconsistente):
+        conciliacion_service.generar_informes(resultado, procesado, tmp_path / "out", reporte=reporte)
+
+    assert not list((tmp_path / "out").glob("*.txt"))
+
+
+def test_sin_nada_que_cargar_no_hay_txt(tmp_path) -> None:
+    anexo = _libro(tmp_path, {"SERVICIOS": [["x"], ["CUPS", "VALOR"], ["890271", 79100]]})
+    gema = _reporte(tmp_path, [[890271.0, 79100.0, "PRO", 0, "C", "Si"]])
+    resultado, procesado, reporte = conciliacion_service.conciliar_anexo(anexo, rules.CARGUE_CUPS, gema)
+
+    rutas = conciliacion_service.generar_informes(resultado, procesado, tmp_path / "out", reporte=reporte)
+
+    assert "txt" not in rutas
+
+
+def test_cargado_pero_inactivo_se_reporta_como_diferencia() -> None:
+    resultado = conciliar(
+        [_reg("111111")],
+        {"111111": RegistroGemanet(codigo="111111", valor=1000.0, tipo="PRO", porcentaje="0",
+                                   descripcion="", activo="No", fila=2)},
+        rules.CARGUE_CUPS,
+    )
+    assert "INACTIVO" in resultado.diferencias[0]["motivo"]
+    assert not resultado.a_cargar
+
+
 def test_informes_y_cli_no_tocan_los_originales(tmp_path, capsys) -> None:
     anexo, gema = _anexo_cups(tmp_path), _gema_cups(tmp_path)
     antes = (anexo.read_bytes(), gema.read_bytes())
 
     codigo = cli_conciliar.main(
-        [str(anexo), "--tipo", "CUPS", "--gemanet", str(gema), "--salida", str(tmp_path / "out")]
+        [str(anexo), "--tipo", "CUPS", "--gemanet", str(gema), "--salida", str(tmp_path / "out"),
+         "--solo-informes"]
     )
 
     salida = capsys.readouterr().out
@@ -315,3 +384,16 @@ def test_informes_y_cli_no_tocan_los_originales(tmp_path, capsys) -> None:
     nombres = {p.name.split("_", 3)[-1] for p in (tmp_path / "out").glob("*.csv")}
     assert {"faltantes.csv", "diferencias.csv", "solo_en_gemanet.csv", "inconsistencias.csv", "resumen.csv"} <= nombres
     assert not list((tmp_path / "out").glob("*.txt"))
+
+
+def test_cli_por_defecto_genera_el_txt(tmp_path, capsys) -> None:
+    anexo, gema = _anexo_cups(tmp_path), _gema_cups(tmp_path)
+
+    codigo = cli_conciliar.main(
+        [str(anexo), "--tipo", "CUPS", "--gemanet", str(gema), "--salida", str(tmp_path / "out")]
+    )
+
+    (txt,) = (tmp_path / "out").glob("*_para_cargar.txt")
+    assert codigo == 0
+    assert txt.read_bytes() == b"937001;35100;PRO;0;0;"
+    assert "1 líneas" in capsys.readouterr().out

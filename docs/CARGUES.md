@@ -118,11 +118,15 @@ python -m src.app.application.cli_propios propios.xlsx --ultimo-pro PRO5715 --sa
 - Los archivos no terminan en salto de línea.
 - Opcional: `--referencias CARPETA` avisa si el CUPS no está en el homologador.
 
-## Conciliación con GEMANET (fase 1: solo informes)
+## Conciliación con GEMANET
 
 Compara UN anexo (un prestador, un contrato) con el reporte exportado de
-GEMANET del mismo tipo, para ver qué falta, en vez de eliminar los
-registros con error y dejar huecos.
+GEMANET del mismo tipo. Descarta lo que ya está cargado y arma el TXT solo
+con lo que falta y es válido, en vez de subir todo y recibir "ya existe en
+este tarifario" o de eliminar los registros con error y dejar huecos.
+
+En la aplicación: menú **Conciliación GEMANET** (sube el anexo y el
+reporte, descarga el TXT y los informes en Excel). Desde la terminal:
 
 ```bash
 python -m src.app.application.cli_conciliar anexo.xlsx --tipo CUPS \
@@ -131,11 +135,12 @@ python -m src.app.application.cli_conciliar anexo.xlsx --tipo CUPS \
 
 `--tipo` es `CUPS`, `CUMS` o `INS`; `--gemanet` es el reporte de ese tipo.
 Procesa todas las hojas del anexo que corresponden al tipo (el resultado
-dice cuáles usó y cuáles omitió; `--hojas "A,B"` para forzarlas). No genera
-TXT. Informes:
+dice cuáles usó y cuáles omitió; `--hojas "A,B"` para forzarlas). Con
+`--solo-informes` no se escribe el TXT. Genera:
 
-| Informe | Contenido |
+| Archivo | Contenido |
 |---|---|
+| `_para_cargar.txt` | **El que se sube**: solo lo que falta en GEMANET y es válido. Antes de escribirlo se verifica leyéndolo: ninguna línea repite un código ni trae uno que ya esté en GEMANET; si falla, no se escribe |
 | `_faltantes.csv` | Lo que no está en GEMANET: `LISTO PARA CARGAR` (con la línea que tendría) o `CON ERROR` (con el motivo) |
 | `_diferencias.csv` | Cargado con otro valor, tipo, manual o porcentaje |
 | `_solo_en_gemanet.csv` | Está en GEMANET y el anexo no lo trae |

@@ -5,7 +5,9 @@ Ejemplo:
     python -m src.app.application.cli_conciliar anexo.xlsx --tipo CUPS \\
         --gemanet GEMA_CUPS.xlsx --referencias carpeta_refs --salida salidas/
 
-Genera (solo informes, no se crea ningún TXT):
+Genera (con --solo-informes no se crea el TXT):
+    <TIPO>_<fecha>_para_cargar.txt       SOLO lo que falta en GEMANET y es válido:
+                                         es el archivo que se sube
     <TIPO>_<fecha>_faltantes.csv         lo que no está cargado: LISTO PARA CARGAR
                                          (con su línea) o CON ERROR (con el motivo)
     <TIPO>_<fecha>_diferencias.csv       cargado con otro valor o tipo
@@ -37,6 +39,11 @@ def construir_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hojas", default=None, help="hojas del anexo separadas por coma")
     parser.add_argument("--referencias", default=None, help="carpeta con el SUPERHOMOLOGADOR")
     parser.add_argument("--salida", default="salidas", help="carpeta de salida")
+    parser.add_argument(
+        "--solo-informes",
+        action="store_true",
+        help="no genera el TXT de lo que falta, solo los informes",
+    )
     return parser
 
 
@@ -78,12 +85,31 @@ def main(argv: list[str] | None = None) -> int:
     for clave, valor in resultado.resumen().items():
         print(f"  {clave:28} {valor}")
 
-    rutas = conciliacion_service.generar_informes(resultado, procesado, args.salida)
-    print("\nInformes generados:")
+    try:
+        rutas = conciliacion_service.generar_informes(
+            resultado,
+            procesado,
+            args.salida,
+            reporte=reporte,
+            con_txt=not args.solo_informes,
+        )
+    except conciliacion_service.TxtInconsistente as error:
+        print(f"No se generó el TXT: falló la verificación final ({error}).", file=sys.stderr)
+        return 5
+
+    print("\nArchivos generados:")
     for clave, destino in rutas.items():
         print(f"  {clave:16} {destino}")
 
-    print("\nSolo informes: no se generó ningún TXT. Los originales no se modificaron.")
+    if "txt" in rutas:
+        print(
+            f"\nTXT: {len(resultado.a_cargar)} líneas, solo lo que falta en GEMANET y es válido. "
+            "Lo demás está en los informes. Los originales no se modificaron."
+        )
+    elif args.solo_informes:
+        print("\nSolo informes: no se generó ningún TXT. Los originales no se modificaron.")
+    else:
+        print("\nNo hay nada para cargar: no se generó TXT. Los originales no se modificaron.")
     return 0
 
 

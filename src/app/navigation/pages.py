@@ -54,6 +54,13 @@ def build_navigation() -> list:
         ),
 
         st.Page(
+            MODULES_DIR / "conciliacion" / "page.py",
+            title="Conciliación GEMANET",
+            icon=":material/compare_arrows:",
+            url_path="conciliacion",
+        ),
+
+        st.Page(
             MODULES_DIR / "consulta" / "page.py",
             title="Consulta de documentos",
             icon=":material/find_in_page:",
